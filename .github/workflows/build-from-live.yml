@@ -1,0 +1,25 @@
+name: Build Horst Budget from live site
+on:
+  push:
+    paths:
+      - '.github/workflows/build-from-live.yml'
+      - '.github/scripts/build_budget_repo.py'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull current live Horst Budget
+        run: curl -fsSL https://horstbudget.netlify.app/ -o index.html
+      - name: Apply requested budget fixes
+        run: python .github/scripts/build_budget_repo.py
+      - name: Commit updated site
+        run: |
+          git config user.name 'ChatGPT Update Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix bill saving and paycheck payment overrides'
+          git push
