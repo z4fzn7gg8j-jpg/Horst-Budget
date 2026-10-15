@@ -752,6 +752,8 @@ function normalizeState(){
   if (!state.instanceTypeOverrides) state.instanceTypeOverrides = {};
   if (!state.instancePaymentMethodOverrides) state.instancePaymentMethodOverrides = {};
   if (!state.instanceTypeOverrides) state.instanceTypeOverrides = {};
+  if (!state.instancePaymentMethodOverrides) state.instancePaymentMethodOverrides = {};
+  if (!state.instanceTypeOverrides) state.instanceTypeOverrides = {};
   if (!state.dismissedDuplicatePairs) state.dismissedDuplicatePairs = [];
   if (!state.dismissedSuggestions) state.dismissedSuggestions = {};
   if (state.settings.estimatedIncomeDefault === undefined) state.settings.estimatedIncomeDefault = DEFAULT_SETTINGS.estimatedIncomeDefault;
@@ -1119,14 +1121,14 @@ function computeAccounts(index){
     if(account.projected!==null)account.projected-=amount;
     if(paid&&account.remaining!==null)account.remaining-=amount;
   };
-  for(const inst of getInstancesForPeriod(index))if(reducesChecking(inst.bill)&&!isExcludedFromBalance(inst.bill,inst.key))subtract(inst.bill.paymentMethod,effectiveAmount(inst.bill,inst.key)||0,!!state.completed[inst.key]);
+  for(const inst of getInstancesForPeriod(index))if(reducesChecking(inst.bill,inst.key)&&!isExcludedFromBalance(inst.bill,inst.key))subtract(effectivePaymentMethod(inst.bill,inst.key),effectiveAmount(inst.bill,inst.key)||0,!!state.completed[inst.key]);
   for(const e of state.extraPayments){const bill=findBill(e.billId);if(bill&&reducesChecking(bill)&&periodIndexForDate(fromISO(e.date))===index)subtract(bill.paymentMethod,e.amount,true);}
   if(pd.income!==null)subtract(pd.titheAccount,computeTithe(pd,pd.income).amount,!!pd.tithePaid);
   return {balances,unassignedPaid,unassignedPending,ready:CHECKING_ACCOUNTS.every(a=>balances[a.v].start!==null)};
 }
 function renderAccounts(index){
   const accounts=computeAccounts(index);
-  return `<h3 style="margin:16px 0 10px">Checking accounts</h3><div class="summary-grid">${Object.values(accounts.balances).map(a=>`<div class="summary-card ${a.projected!==null&&a.projected<0?'neg':''}"><div class="label">${a.label}</div><div class="value">${a.remaining===null?'Not entered':fmtMoney(a.remaining)}</div><div class="muted-note">Available now</div><div style="margin-top:8px">After planned payments: <strong>${a.projected===null?'—':fmtMoney(a.projected)}</strong></div>${a.projected!==null&&a.projected<0?'<div class="pill needs">Projected overdraft</div>':''}</div>`).join('')}</div>${accounts.unassignedPaid||accounts.unassignedPending?`<p class="warning-banner">Choose an account for ${fmtMoney(accounts.unassignedPaid)} in paid payments and ${fmtMoney(accounts.unassignedPending)} in unpaid payments. Account balances cannot include these yet.</p>`:''}`;
+  return `<h3 style="margin:16px 0 10px">Checking accounts</h3><div class="summary-grid">${Object.values(accounts.balances).map(a=>`<div class="summary-card ${a.remaining!==null&&a.remaining<0?'neg':''}"><div class="label">${a.label}</div><div class="value">${a.remaining===null?'Not entered':fmtMoney(a.remaining)}</div><div class="muted-note">Available now</div></div>`).join('')}</div>${accounts.unassignedPaid?`<p class="warning-banner">Choose an account for ${fmtMoney(accounts.unassignedPaid)} in paid payments. Available-now balances cannot include those payments yet.</p>`:''}`;
 }
 function balanceActivity(index){
   const pd=getPeriodData(index);
@@ -1417,9 +1419,8 @@ function renderPlan(){
   // Step 3
   html += `<details class="card" id="step3Details" ${getStepExpanded("step3", true) ? "open" : ""}>
     <summary style="cursor:pointer;"><span class="step-label">Step 3</span><h2 style="display:inline;">Running balance</h2></summary>
-    <div class="card-sub">Without a checking balance entry, recorded payments reduce your paycheck income. Your starting checking balance replaces the income total as the starting funds. Every bill marked paid is subtracted from Available now. Unpaid bills reduce the projection.</div>
+    <div class="card-sub">Available now is your Step 1 starting checking balance minus payments you have checked off from that account. One-off AFCU/DFCU account changes are included.</div>
     ${renderAccounts(idx)}
-    ${renderRunway(bal)}
     ${bal.rows.length ? (
         (!bal.incomeEntered ? `<p class="muted-note" style="margin-bottom:10px;">This paycheck's income hasn't been entered yet — tithing and bills will factor in once you add it above. Extra income below still counts toward what's left.</p>` : "") +
         bal.rows.map(r => {
