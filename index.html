@@ -750,6 +750,8 @@ function normalizeState(){
   if (!state.instanceStatusOverrides) state.instanceStatusOverrides = {};
   if (!state.instancePaymentMethodOverrides) state.instancePaymentMethodOverrides = {};
   if (!state.instanceTypeOverrides) state.instanceTypeOverrides = {};
+  if (!state.instancePaymentMethodOverrides) state.instancePaymentMethodOverrides = {};
+  if (!state.instanceTypeOverrides) state.instanceTypeOverrides = {};
   if (!state.dismissedDuplicatePairs) state.dismissedDuplicatePairs = [];
   if (!state.dismissedSuggestions) state.dismissedSuggestions = {};
   if (state.settings.estimatedIncomeDefault === undefined) state.settings.estimatedIncomeDefault = DEFAULT_SETTINGS.estimatedIncomeDefault;
@@ -769,8 +771,8 @@ function reducesChecking(bill, key){
 }
 function paymentSourceLabel(bill, key){
   const method = effectivePaymentMethod(bill, key);
-  if (method === "afcu_checking") return "Leaves AFCU";
-  if (method === "dfcu_checking") return "Leaves DFCU";
+  if (method === "afcu_checking") return "Paid AFCU";
+  if (method === "dfcu_checking") return "Paid DFCU";
   if (method === "credit" || method === "autopay_credit") return "Credit card payment";
   if (method === "payroll") return "Payroll deduction";
   if (method === "included") return "Included payment";
@@ -1463,7 +1465,7 @@ function renderIndividualBillCards(instances, periodIndex){
     const b = inst.bill;
     const done = !!state.completed[inst.key];
     const review = !!inst.carriedOver && needsRolloverReview(inst.key);
-    const counts = reducesChecking(b) && !isExcludedFromBalance(b, inst.key);
+    const counts = reducesChecking(b, inst.key) && !isExcludedFromBalance(b, inst.key);
     const confirmed = isAmountConfirmed(b, inst.key);
     const shownAmount = effectiveAmount(b, inst.key);
     return `<div class="bill-card ${done ? "completed" : ""}" data-key="${inst.key}">
@@ -1478,7 +1480,7 @@ function renderIndividualBillCards(instances, periodIndex){
         <div class="bill-meta">
           <span class="pill">Due ${fmtDate(inst.dueDate)}</span>
           ${inst.carriedOver ? `<span class="pill needs">Carried over · ${review ? "Needs review" : "Still owed"}</span>` : ""}
-          <span class="pill ${counts ? "checking" : "credit"}">${counts ? "Leaves checking" : "Not from checking"}</span>
+          <span class="pill ${counts ? "checking" : "credit"}">${paymentSourceLabel(b, inst.key)}</span>
           ${!done && effectiveStatus(b, inst.key) !== "upcoming" ? `<span class="pill">${STATUSES.find(s=>s.v===effectiveStatus(b, inst.key))?.label || effectiveStatus(b, inst.key)}</span>` : ""}
           ${b.needsVerification ? `<span class="pill needs">Needs verification</span>` : ""}
           ${!done && !confirmed ? `<span class="pill needs">${b.payInFull ? "Paying full balance — confirm amount" : "Estimated — confirm amount"}</span>` : ""}
