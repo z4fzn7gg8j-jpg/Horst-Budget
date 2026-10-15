@@ -4,6 +4,8 @@ import re
 p = Path('index.html')
 s = p.read_text(encoding='utf-8')
 
+# Keep the existing one-off payment-source UI intact, then fix Step 3 account math.
+
 # 1) Make bill collection initialization safe so Add Bill cannot fail on a missing/old bills array.
 needle = "function normalizeState(){\n  state.settings = Object.assign({}, DEFAULT_SETTINGS, state.settings || {});"
 if needle in s and "if (!Array.isArray(state.bills)) state.bills = [];" not in s[s.find(needle):s.find(needle)+400]:
@@ -28,8 +30,8 @@ function reducesChecking(bill, key){
 }
 function paymentSourceLabel(bill, key){
   const method = effectivePaymentMethod(bill, key);
-  if (method === "afcu_checking") return "Leaves AFCU";
-  if (method === "dfcu_checking") return "Leaves DFCU";
+  if (method === "afcu_checking") return "Paid AFCU";
+  if (method === "dfcu_checking") return "Paid DFCU";
   if (method === "credit" || method === "autopay_credit") return "Credit card payment";
   if (method === "payroll") return "Payroll deduction";
   if (method === "included") return "Included payment";
@@ -133,5 +135,30 @@ if old in s:
 marker = 'Object.keys(state.instanceStatusOverrides).forEach(k => { if (belongsToDeleted(k)) delete state.instanceStatusOverrides[k]; });'
 if marker in s and 'state.instancePaymentMethodOverrides' not in s[s.find(marker):s.find(marker)+500]:
     s = s.replace(marker, marker + '\n    Object.keys(state.instancePaymentMethodOverrides).forEach(k => { if (belongsToDeleted(k)) delete state.instancePaymentMethodOverrides[k]; });\n    Object.keys(state.instanceTypeOverrides).forEach(k => { if (belongsToDeleted(k)) delete state.instanceTypeOverrides[k]; });',1)
+
+# 9) Step 3 must route each occurrence to its effective one-off account, not the recurring bill default.
+s = s.replace(
+    'for(const inst of getInstancesForPeriod(index))if(reducesChecking(inst.bill)&&!isExcludedFromBalance(inst.bill,inst.key))subtract(inst.bill.paymentMethod,effectiveAmount(inst.bill,inst.key)||0,!!state.completed[inst.key]);',
+    'for(const inst of getInstancesForPeriod(index))if(reducesChecking(inst.bill,inst.key)&&!isExcludedFromBalance(inst.bill,inst.key))subtract(effectivePaymentMethod(inst.bill,inst.key),effectiveAmount(inst.bill,inst.key)||0,!!state.completed[inst.key]);'
+)
+
+# 10) Step 3 is an actual-account view: show one number only — starting balance minus checked-off payments.
+start = s.find('function renderAccounts(index){')
+if start != -1:
+    end = s.find('function balanceActivity(index){', start)
+    if end != -1:
+        render_accounts = '''function renderAccounts(index){
+  const accounts=computeAccounts(index);
+  return `<h3 style="margin:16px 0 10px">Checking accounts</h3><div class="summary-grid">${Object.values(accounts.balances).map(a=>`<div class="summary-card ${a.remaining!==null&&a.remaining<0?'neg':''}"><div class="label">${a.label}</div><div class="value">${a.remaining===null?'Not entered':fmtMoney(a.remaining)}</div><div class="muted-note">Available now</div></div>`).join('')}</div>${accounts.unassignedPaid?`<p class="warning-banner">Choose an account for ${fmtMoney(accounts.unassignedPaid)} in paid payments. Available-now balances cannot include those payments yet.</p>`:''}`;
+}
+'''
+        s = s[:start] + render_accounts + s[end:]
+
+# 11) Clarify Step 3's purpose and remove projected-balance runway from this section.
+s = s.replace(
+    'Without a checking balance entry, recorded payments reduce your paycheck income. Your starting checking balance replaces the income total as the starting funds. Every bill marked paid is subtracted from Available now. Unpaid bills reduce the projection.',
+    'Available now is your Step 1 starting checking balance minus payments you have checked off from that account. One-off AFCU/DFCU account changes are included.'
+)
+s = s.replace('    ${renderAccounts(idx)}\n    ${renderRunway(bal)}', '    ${renderAccounts(idx)}')
 
 p.write_text(s, encoding='utf-8')
