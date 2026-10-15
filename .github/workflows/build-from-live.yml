@@ -15,11 +15,25 @@ jobs:
         run: curl -fsSL https://horstbudget.netlify.app/ -o index.html
       - name: Apply requested budget fixes
         run: python .github/scripts/build_budget_repo.py
+      - name: Show actual one-off payment source on paycheck cards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('if (method === "afcu_checking") return "Leaves AFCU";', 'if (method === "afcu_checking") return "Paid AFCU";', 1)
+          s = s.replace('if (method === "dfcu_checking") return "Leaves DFCU";', 'if (method === "dfcu_checking") return "Paid DFCU";', 1)
+          s = s.replace('const counts = reducesChecking(b) && !isExcludedFromBalance(b, inst.key);', 'const counts = reducesChecking(b, inst.key) && !isExcludedFromBalance(b, inst.key);', 1)
+          old = '<span class="pill ${counts ? "checking" : "credit"}">${counts ? "Leaves checking" : "Not from checking"}</span>'
+          new = '<span class="pill ${counts ? "checking" : "credit"}">${paymentSourceLabel(b, inst.key)}</span>'
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
       - name: Commit updated site
         run: |
           git config user.name 'ChatGPT Update Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add index.html
           git diff --cached --quiet && exit 0
-          git commit -m 'Fix bill saving and paycheck payment overrides'
+          git commit -m 'Show one-off payment account on bill cards'
           git push
