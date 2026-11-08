@@ -142,6 +142,7 @@ function selectedReview(){
 function takeChoice(tx){
  if(choice.id!==tx.id){
    choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
+   rememberCurrent=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;
  }
 }
 function renderFilters(){
@@ -220,7 +221,7 @@ function reviewOverlay(){
  '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person',customPersonOpen,'Who was it for?')+'</div></div>'+
  '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
  '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
- (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"> Remember this merchant</label>':'')+
+ (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember this merchant</label>':'')+
  '</div></article><footer class="tx-review-bottom">'+
  '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
  '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
@@ -350,6 +351,13 @@ async function preload(){
  })().catch(e=>{openPromise=null;notice("Could not initialize Transactions: "+e.message,true);render();});
  return openPromise;
 }
+function refreshReviewOverlay(){
+ const old=root.querySelector("#txReviewOverlay");
+ if(!reviewOpen||!old){renderDashboard();return;}
+ const wrap=document.createElement("div");
+ wrap.innerHTML=reviewOverlay();
+ if(wrap.firstElementChild)old.replaceWith(wrap.firstElementChild);
+}
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
@@ -357,7 +365,7 @@ function choose(kind,value){
  if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;customSubOpen=false;}
  if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;customPersonOpen=false;}
  if(kind==="kind"){choice.kind=value;}
- renderDashboard();
+ refreshReviewOverlay();
 }
 async function ensureCategory(name,sub){
  name=categoryName(name);sub=categoryName(sub);
@@ -601,12 +609,12 @@ root.addEventListener("click",async event=>{
  if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
   const type=el.id.slice(5);if(type==="Category")customCategoryOpen=true;
   if(type==="Subcategory")customSubOpen=true;if(type==="Person")customPersonOpen=true;
-  render();const input=root.querySelector("#txReview"+type);input?.focus();return;
+  refreshReviewOverlay();const input=root.querySelector("#txReview"+type);input?.focus();return;
  }
  if(el.dataset.closeCustom){
   const type=el.dataset.closeCustom;if(type==="Category")customCategoryOpen=false;
   if(type==="Subcategory")customSubOpen=false;if(type==="Person")customPersonOpen=false;
-  render();return;
+  refreshReviewOverlay();return;
  }
  if(el.id==="txTypeToggle"){const list=root.querySelector("#txTypeChoices");if(list)list.hidden=!list.hidden;return;}
  if(el.id==="txSaveCard"){animateReviewSwipe("right");return;}
@@ -625,6 +633,7 @@ root.addEventListener("input",e=>{
 });
 root.addEventListener("change",e=>{
  const el=e.target;
+ if(el.id==="txRememberMerchant"){rememberCurrent=el.checked;return;}
  if(el.id==="txFilterMonth")draftFilter.month=el.value;
  if(el.id==="txFilterYear")draftFilter.year=el.value;
  if(el.id==="txFilterStart")draftFilter.start=el.value;
