@@ -20,7 +20,7 @@ let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,edit
 let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",personTag:""},activeCategoryDrill=null;
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
-let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false;
+let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false,editingRecurringId=null,rememberCurrent=false;
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
@@ -64,7 +64,7 @@ function upcomingSubscriptions(){
  const end=new Date(todayLocal);end.setDate(end.getDate()+7);
  const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
  const start=iso(todayLocal),finish=iso(end);
- return recurring.filter(t=>t.active&&!t.hidden&&t.recurring_type==="SUBSCRIPTION"&&
+ return recurring.filter(t=>t.active&&!t.hidden&&classifyStream(t)==="subscription"&&
   t.predicted_next_date>=start&&t.predicted_next_date<=finish)
   .sort((a,b)=>a.predicted_next_date.localeCompare(b.predicted_next_date)||a.merchant.localeCompare(b.merchant));
 }
@@ -77,24 +77,51 @@ function personChoices(){
  return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
  '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
+function classifyStream(r){
+ if(["bill","subscription","recurring"].includes(r.display_type))return r.display_type;
+ return r.recurring_type==="SUBSCRIPTION"?"subscription":
+   (r.recurring_type==="BILL"||r.recurring_type==="MORTGAGE")?"bill":"recurring";
+}
+function normalizeMerchantName(text){
+ return String(text||"").toLowerCase().replace(/\b(payment|payments|bill|monthly|subscription|debit|inc|llc)\b/g,"")
+  .replace(/[^a-z0-9]/g,"").trim();
+}
 function renderRecurringBills(){
- const target=document.getElementById("detectedRecurringList");
+ const subsTarget=document.getElementById("detectedRecurringList");
+ const billsTarget=document.getElementById("detectedBillsList");
  const badge=document.getElementById("billRecurringCount");
- if(!target)return;
- const items=recurring.filter(r=>r.active&&!r.hidden&&
-  ["SUBSCRIPTION","BILL","MORTGAGE"].includes(r.recurring_type))
+ if(!subsTarget||!billsTarget)return;
+ const manual=typeof state!=="undefined"&&state?.bills?state.bills:[];
+ const manualKeys=manual.map(b=>normalizeMerchantName(b.name)).filter(n=>n.length>=5);
+ function isAlreadyPlanned(r){
+  const names=[r.merchant,r.description].map(normalizeMerchantName).filter(Boolean);
+  return names.some(n=>manualKeys.some(m=>m===n||(m.length>=7&&n.length>=7&&(n.includes(m)||m.includes(n)))));
+ }
+ const streams=recurring.filter(r=>r.active&&!r.hidden)
   .sort((a,b)=>(a.predicted_next_date||"9999").localeCompare(b.predicted_next_date||"9999"));
- if(badge)badge.textContent=items.length?"("+items.length+")":"";
- if(!loaded){target.innerHTML='<p class="tx-muted">Loading recurring patterns…</p>';return;}
- if(!items.length){target.innerHTML='<p class="tx-muted">No recognized recurring bills or subscriptions yet.</p>';return;}
- target.innerHTML=items.map(r=>{
-  const value=Number(r.typical_amount||r.last_amount||0);
+ const nonDuplicates=streams.filter(r=>!isAlreadyPlanned(r));
+ const planned=nonDuplicates.filter(r=>classifyStream(r)==="bill");
+ const others=nonDuplicates.filter(r=>classifyStream(r)!=="bill");
+ if(badge)badge.textContent="("+others.length+")";
+ function displayStream(r){
+  const kind=classifyStream(r),tagLabel=kind==="bill"?"Bill":kind==="subscription"?"Subscription":"Recurring";
+  const amount=Number(r.typical_amount||r.last_amount||0);
   const date=r.predicted_next_date?dateLabel(r.predicted_next_date):"Date unknown";
-  return '<div class="tx-detected-item"><div><strong>'+safe(r.description||r.merchant)+'</strong>'+
-   '<small>'+safe(r.recurring_type==="SUBSCRIPTION"?"Subscription":r.recurring_type==="MORTGAGE"?"Mortgage":"Bill")+
-   ' · '+safe(r.frequency||"Recurring")+' · Expected '+safe(date)+'</small></div>'+
-   '<strong>'+(value>0?'≈'+money(value):'Varies')+'</strong></div>';
- }).join("");
+  return '<div class="tx-detected-item tx-detected-modern"><div class="tx-detected-info"><strong>'+safe(r.description||r.merchant)+'</strong>'+
+   '<small>Expected '+safe(date)+' · '+safe(r.frequency||"Recurring")+'</small>'+
+   '<button type="button" class="tx-stream-badge tx-stream-'+kind+'" data-edit-recurring="'+safe(r.id)+'">'+tagLabel+' <span aria-hidden="true">⌄</span></button>'+
+   (editingRecurringId===r.id?'<div class="tx-stream-edit-row">'+
+     [["bill","Bill"],["subscription","Subscription"],["recurring","Other recurring"]].map(([type,label])=>
+       '<button type="button" class="tx-stream-choice'+(kind===type?" active":"")+
+       '" data-set-recurring="'+safe(r.id)+'" data-recurring-type="'+type+'">'+label+'</button>').join("")+
+     '<button type="button" class="tx-stream-choice" data-set-recurring="'+safe(r.id)+'" data-recurring-type="auto">Reset</button></div>':'')+
+   '</div><strong class="tx-recurring-amount">'+(amount>0?'≈'+money(amount):"Varies")+'</strong></div>';
+ }
+ billsTarget.innerHTML=planned.length?'<div class="tx-detected-heading">Detected bills · estimated</div>'+planned.map(displayStream).join(""):"";
+ subsTarget.innerHTML=others.length?'<div class="tx-detected-heading">Detected from connected accounts</div>'+
+  others.map(displayStream).join(""):'<p class="tx-muted">No other detected recurring charges.</p>';
+ const count=document.getElementById("billMainCount");
+ if(count&&manual.length)count.textContent="("+manual.filter(b=>!["annual","semiannual","subscription"].includes(b.type)).length+" planned + "+planned.length+" detected)";
 }
 function getOverview(){
  const current=today();
@@ -612,6 +639,22 @@ root.addEventListener("submit",async e=>{
   await persist(tx,form.elements.category.value,form.elements.subcategory.value,form.elements.kind.value,false,form.elements.person.value);
   editHistoryId=null;notice("Updated!");render();if(typeof currentView!=="undefined"&&currentView==="home")renderHome();
  }catch(error){notice("Unable to save: "+error.message,true);btn.disabled=false;}
+});
+document.addEventListener("click",async e=>{
+ const btn=e.target.closest("[data-edit-recurring],[data-set-recurring]");
+ if(!btn)return;
+ if(btn.dataset.editRecurring){
+  editingRecurringId=editingRecurringId===btn.dataset.editRecurring?null:btn.dataset.editRecurring;
+  renderRecurringBills();return;
+ }
+ const row=recurring.find(r=>r.id===btn.dataset.setRecurring);if(!row||!client||!user)return;
+ const type=btn.dataset.recurringType==="auto"?null:btn.dataset.recurringType;
+ if(type&&!["bill","subscription","recurring"].includes(type))return;
+ btn.disabled=true;
+ const res=await client.from("horst_recurring_streams").update({display_type:type}).eq("owner_id",user.id).eq("id",row.id).select("id");
+ if(res.error||!res.data?.length){btn.disabled=false;alert("Could not save recurring type: "+(res.error?.message||"no row updated"));return;}
+ row.display_type=type;editingRecurringId=null;renderRecurringBills();
+ if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
 });
 document.addEventListener("click",async e=>{
  const el=e.target.closest("button");if(!el)return;
