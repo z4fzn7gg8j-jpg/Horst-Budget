@@ -13,7 +13,7 @@ const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth
 const categoryName=x=>String(x||"").trim();
 const key=x=>categoryName(x).toLocaleLowerCase();
 const isValidColor=c=>/^#[0-9a-f]{6}$/i.test(c||"");
-let client=null,user=null,rows=[],rules=[],categories=[],loaded=false,loading=false;
+let client=null,user=null,rows=[],rules=[],categories=[],accounts=[],loaded=false,loading=false;
 let filter={mode:"all",month:today(),year:String(new Date().getFullYear()),start:"",end:""};
 let draftFilter={...filter};
 let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,editingCategoryId=null;
@@ -42,23 +42,103 @@ function periodLabel(){
  if(filter.mode==="year")return filter.year;
  return [filter.start||"Any date",filter.end||"Today"].join(" – ");
 }
+function accountType(tx){
+ if(!tx)return "other";
+ let found=tx.source_account_id?accounts.find(a=>a.source_account_id===tx.source_account_id):null;
+ if(!found){
+  const matching=accounts.filter(a=>key(a.name)===key(tx.account_name));
+  if(matching.length===1)found=matching[0];
+  else if(matching.length>1&&matching.every(a=>a.account_type===matching[0].account_type))found=matching[0];
+ }
+ return found?.account_type||"other";
+}
+function classifyPayment(tx){
+ if(tx.pending)return "pending";
+ const description=(String(tx.description||"")+" "+String(tx.merchant||"")).toLowerCase();
+ const amount=Number(tx.amount)||0,account=accountType(tx);
+ const category=key(tx.category);
+ const knownBills=/^(bills?(&| and)?utilities|subscriptions?|insurance|housing|utilities?)$/.test(category.replace(/\s+/g,""))||
+   ["bills & utilities","bills and utilities","utilities","subscriptions","insurance","housing"].includes(category);
+ const knownPersonal=!!category&&!knownBills;
+ const refund=/\b(refund|reversal|returned|return credit|cashback|cash back|reward|credit adjustment|statement credit)\b/.test(description);
+ const interestFee=/\b(interest|finance charge|service fee|late fee|cash advance fee|overdraft fee)\b/.test(description);
+ const debtPay=/\b(credit card payment|card payment|payment to visa|payment from checking|affirm payment|loan payment|payment received|autopay)\b/.test(description)||
+   (/\bpayment\b/.test(description)&&/\b(visa|credit|card|affirm|discover|chase)\b/.test(description));
+ const utilityMerchant=/\b(southwest gas|orbitel communications|electric company|water utility)\b/.test(description);
+ if(account==="credit_card"){
+  if(amount>0)return refund&&!debtPay?"refund":"debt";
+  if(interestFee)return "purchase";
+  if(tx.kind==="transfer")return "internal";
+  return knownBills?"bill":"purchase";
+ }
+ if(account==="checking"||account==="savings"){
+  if(amount<0){
+   if(debtPay)return "debt";
+   if(knownBills||(!knownPersonal&&utilityMerchant))return "bill";
+   if(tx.kind==="transfer")return "internal";
+   return "purchase";
+  }
+  if(amount>0){
+   if(refund||tx.kind==="refund")return "refund";
+   if(tx.kind==="transfer")return "internal";
+   return "income";
+  }
+ }
+ if(account==="loan"){
+  if(amount>0&&!refund)return "debt";
+  if(refund)return "refund";
+  if(tx.kind==="transfer")return "internal";
+ }
+ if(tx.kind==="refund")return "refund";
+ if(tx.kind==="income")return "income";
+ if(tx.kind==="transfer"){
+  return debtPay?"debt":"internal";
+ }
+ if(knownBills||(!knownPersonal&&utilityMerchant))return "bill";
+ return "purchase";
+}
 function spend(t){
- if(t.pending||t.exclude_from_spending||["transfer","income"].includes(t.kind))return 0;
- if(t.kind==="refund")return -Math.abs(Number(t.amount)||0);
+ const purpose=classifyPayment(t);
+ if(purpose==="pending"||purpose==="internal"||purpose==="debt"||purpose==="income")return 0;
+ if(purpose==="refund")return -Math.abs(Number(t.amount)||0);
  return Math.abs(Number(t.amount)||0);
 }
 function summary(list){
  const byCat={},bySub={},byPerson={};
- let total=0;
+ let total=0,everyday=0,billsPaid=0,debtPaid=0;
+ // Credit-card/loan repayments are counted from the receiving account when present.
+ // Checking-side debt repayments are counted only when an equivalent receipt is not present.
+ const receipts=list.filter(t=>!t.pending&&(accountType(t)==="credit_card"||accountType(t)==="loan")&&
+  Number(t.amount)>0&&classifyPayment(t)==="debt");
+ const usedReceipts=new Set();
+ const dateGap=(a,b)=>Math.abs((Date.parse(a+"T12:00:00Z")-Date.parse(b+"T12:00:00Z"))/86400000);
+ const matchedOutgoing=new Set();
  for(const t of list){
-   const value=spend(t);if(!value)continue;
-   total+=value;
-   const cat=t.category||"Needs review",sub=t.subcategory||"Other";
-   byCat[cat]=(byCat[cat]||0)+value;
-   if(t.person_tag){const who=t.person_tag.trim();if(who)byPerson[who]=(byPerson[who]||0)+value;}
-   const k=cat+"\u0001"+sub;bySub[k]=(bySub[k]||0)+value;
+  const purpose=classifyPayment(t);
+  if(purpose==="pending")continue;
+  if(purpose==="debt"&&(accountType(t)==="checking"||accountType(t)==="savings")&&Number(t.amount)<0){
+   const index=receipts.findIndex((r,i)=>!usedReceipts.has(i)&&
+    Math.abs(Math.abs(Number(r.amount))-Math.abs(Number(t.amount)))<.02&&dateGap(r.txn_date,t.txn_date)<=4);
+   if(index>=0){usedReceipts.add(index);matchedOutgoing.add(t.id);}
+  }
  }
- return {total,byCat,bySub,byPerson};
+ for(const t of list){
+  const purpose=classifyPayment(t),value=spend(t);
+  if(purpose==="debt"&&!t.pending){
+   const amount=Math.abs(Number(t.amount)||0);
+   if((accountType(t)==="credit_card"||accountType(t)==="loan")&&Number(t.amount)>0)debtPaid+=amount;
+   else if((accountType(t)==="checking"||accountType(t)==="savings"||accountType(t)==="other")&&Number(t.amount)<0&&!matchedOutgoing.has(t.id))debtPaid+=amount;
+  }
+  if(!value)continue;
+  total+=value;
+  if(purpose==="bill")billsPaid+=value;
+  else everyday+=value;
+  const cat=t.category||"Needs review",sub=t.subcategory||"Other";
+  byCat[cat]=(byCat[cat]||0)+value;
+  if(t.person_tag){const who=t.person_tag.trim();if(who)byPerson[who]=(byPerson[who]||0)+value;}
+  const k=cat+"\u0001"+sub;bySub[k]=(bySub[k]||0)+value;
+ }
+ return {total,everyday,billsPaid,debtPaid,byCat,bySub,byPerson};
 }
 function upcomingSubscriptions(){
  const now=new Date(),todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate());
@@ -158,7 +238,7 @@ function getOverview(){
  const ranked=Object.entries(sum.byCat).sort((a,b)=>b[1]-a[1]);
  return {loaded,imported:rows.length,spending:sum.total,topCategories:ranked.slice(0,3),
   toReview:rows.filter(t=>t.review_status!=="auto").length,monthRows:monthRows.length,
-  upcomingSubscriptions:upcomingSubscriptions(),recurringCount:recurring.length};
+  upcomingSubscriptions:upcomingSubscriptions(),recurringCount:recurring.length,billsPaid:sum.billsPaid,debtPaid:sum.debtPaid,everyday:sum.everyday};
 }
 function filteredReview(){
  return dateScope().filter(t=>t.review_status!=="auto").sort((a,b)=>b.txn_date.localeCompare(a.txn_date)||b.imported_at.localeCompare(a.imported_at));
@@ -169,7 +249,8 @@ function selectedReview(){
 }
 function takeChoice(tx){
  if(choice.id!==tx.id){
-   choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
+   const purpose=classifyPayment(tx);
+   choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:["internal","debt"].includes(purpose)?"transfer":purpose==="refund"?"refund":tx.kind||"expense",personTag:tx.person_tag||""};
    rememberCurrent=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;
    categoryPage=0;subcategoryPage=0;personPage=0;
  }
@@ -419,12 +500,13 @@ async function loadData(){
   client.from("horst_transactions").select("*").eq("owner_id",user.id).order("txn_date",{ascending:false}).limit(5000),
   client.from("horst_transaction_rules").select("*").eq("owner_id",user.id).limit(1000),
   client.from("horst_budget_categories").select("*").eq("owner_id",user.id).order("position",{ascending:true}),
-  client.from("horst_recurring_streams").select("*").eq("owner_id",user.id).limit(500)
+  client.from("horst_recurring_streams").select("*").eq("owner_id",user.id).limit(500),
+  client.from("horst_budget_accounts").select("*").eq("owner_id",user.id).order("name",{ascending:true})
  ]);
  loading=false;
  const error=values.find(x=>x.error);
  if(error){notice("Couldn't load private data: "+error.error.message,true);render();return;}
- rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];recurring=values[3].data||[];
+ rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];recurring=values[3].data||[];accounts=values[4].data||[];
  loaded=true;
  noticeText="";noticeBad=false;
  render();
@@ -432,6 +514,7 @@ async function loadData(){
  renderRecurringBills();
  const panel=document.getElementById("txCategorySettings");
  if(panel)renderCategorySettings();
+ if(document.getElementById("txAccountsSettings"))renderAccountsSettings();
 }
 async function preload(){
  if(openPromise)return openPromise;
