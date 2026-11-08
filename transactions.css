@@ -1,0 +1,48 @@
+/* Transactions are a private, independently authenticated Horst Budget module. */
+#view-transactions { --tx-green:#2F6F5E; }
+#view-transactions .tx-heading { display:flex; gap:12px; justify-content:space-between; align-items:flex-start; margin-bottom:18px; flex-wrap:wrap; }
+#view-transactions .tx-heading h1 { font-size:29px; margin:0 0 5px; }
+#view-transactions .tx-heading p { margin:0; color:var(--muted); font-size:14px; }
+#view-transactions .tx-auth { max-width:520px; margin:28px auto; }
+#view-transactions .tx-auth h2 { margin-bottom:8px; }
+#view-transactions .tx-auth p { font-size:14px; color:var(--muted); }
+#view-transactions .tx-auth .field { margin-top:20px; }
+#view-transactions .tx-message { padding:11px 14px; border:1px solid var(--line); border-radius:12px; font-size:14px; margin:12px 0; background:var(--surface-sunk); }
+#view-transactions .tx-message.error { border-color:var(--danger); color:var(--danger); background:var(--danger-bg); }
+#view-transactions .tx-message:empty { display:none; }
+#view-transactions .tx-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:18px; }
+#view-transactions .tx-stat { border:1px solid var(--line); background:var(--surface); border-radius:16px; padding:14px; }
+#view-transactions .tx-stat small { color:var(--muted); display:block; font-size:12px; }
+#view-transactions .tx-stat strong { display:block; font-size:23px; font-family:var(--font-display); margin-top:3px; }
+#view-transactions .tx-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+#view-transactions .tx-controls label { margin:0; }
+#view-transactions .tx-controls input[type="month"] { max-width:200px; }
+#view-transactions .tx-status-tabs { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+#view-transactions .tx-filter { background:var(--surface); border:1px solid var(--line); padding:9px 13px; border-radius:999px; font-size:14px; color:var(--ink); cursor:pointer; }
+#view-transactions .tx-filter[aria-pressed="true"] { background:var(--primary-soft); border-color:var(--primary); color:var(--primary-dark); font-weight:700; }
+#view-transactions .tx-row { padding:14px 0; border-bottom:1px solid var(--line); }
+#view-transactions .tx-row:last-child { border-bottom:0; }
+#view-transactions .tx-row-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+#view-transactions .tx-row-top strong { display:block; overflow-wrap:anywhere; }
+#view-transactions .tx-row-top small { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
+#view-transactions .tx-row-amount { white-space:nowrap; font-weight:700; font-size:17px; }
+#view-transactions .tx-label { display:inline-flex; font-size:12px; padding:3px 9px; border-radius:999px; margin-top:8px; background:var(--surface-sunk); color:var(--muted); }
+#view-transactions .tx-label.auto { color:var(--primary-dark); background:var(--primary-soft); }
+#view-transactions .tx-label.review { color:var(--warning); background:var(--warning-bg); }
+#view-transactions .tx-edit { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0 0; }
+#view-transactions .tx-edit label { font-size:12px; }
+#view-transactions .tx-edit input, #view-transactions .tx-edit select { width:100%; }
+#view-transactions .tx-edit .tx-edit-actions { grid-column:1/-1; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+#view-transactions .tx-edit-actions label { margin:0; color:var(--ink); font-weight:400; display:flex; align-items:center; gap:7px; }
+#view-transactions .tx-cat-row { display:flex; justify-content:space-between; gap:12px; padding:11px 0; border-bottom:1px solid var(--line); }
+#view-transactions .tx-cat-row:last-child { border:0; }
+#view-transactions .tx-empty { text-align:center; color:var(--muted); padding:32px 8px; }
+#view-transactions .tx-spinner { padding:40px; text-align:center; color:var(--muted); }
+#view-transactions .tx-small { font-size:12px; color:var(--muted); }
+#view-transactions .tx-signout { font-size:13px; padding:8px 12px; min-height:36px; }
+@media (max-width:550px) {
+  #view-transactions .tx-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #view-transactions .tx-summary .tx-stat:last-child { grid-column:1/-1; }
+  #view-transactions .tx-stat strong { font-size:20px; }
+  #view-transactions .tx-edit { grid-template-columns:1fr; }
+}
