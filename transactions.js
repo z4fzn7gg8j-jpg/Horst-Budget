@@ -139,7 +139,7 @@ function undoMarkup(){
  return '<button class="tx-undo" type="button" id="txUndoAction" aria-label="Undo last transaction action"><span aria-hidden="true">↶</span> Undo / Back</button>';
 }
 function reviewerHtml(){
- const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=pending[0];
+ const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=selectedReview();
  const done=all.length-pending.length;
  const number=rows.filter(t=>t.review_status==="auto"&&dateScope().some(s=>s.id===t.id)).length;
  const progress=all.length+number?Math.round((number/(all.length+number))*100):100;
@@ -346,34 +346,93 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
   const rule=await client.from("horst_transaction_rules").upsert({
    owner_id:user.id,merchant_match:tx.merchant.trim().toLowerCase(),category,
    subcategory:subcategory||null,kind,exclude_from_spending:kind==="transfer",enabled:true
-  },{onConflict:"owner_id,merchant_match"});
+  },{onConflict:"owner_id,merchant_match"}).select("*").single();
   if(rule.error)throw rule.error;
+  const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match);
+  if(index>=0)rules[index]=rule.data;else rules.push(rule.data);
  }
  const local=rows.find(t=>t.id===tx.id);
  if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind,
   exclude_from_spending:kind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
  return true;
 }
+const txnUndoFields=["category","subcategory","person_tag","kind","exclude_from_spending","review_status",
+ "classification_origin","reviewed_at"];
+function snapshotTxn(tx){
+ const data={};
+ for(const field of txnUndoFields)data[field]=tx[field]??null;
+ return data;
+}
 async function saveCurrent(){
- const tx=selectedReview();
- if(!tx)return;
- const cat=root.querySelector("#txReviewCategory")?.value||choice.category;
- const sub=root.querySelector("#txReviewSubcategory")?.value||choice.subcategory;
+ if(actionBusy)return;
+ const tx=selectedReview();if(!tx)return;
+ const cat=root.querySelector("#txReviewCategory")?.value??choice.category;
+ const sub=root.querySelector("#txReviewSubcategory")?.value??choice.subcategory;
+ const person=root.querySelector("#txReviewPerson")?.value??choice.personTag;
  const remember=!!root.querySelector("#txRememberMerchant")?.checked;
+ const merchantKey=String(tx.merchant||"").trim().toLowerCase();
+ const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
+ const before=snapshotTxn(tx);
+ const ruleBefore=remember&&stable?structuredClone(rules.find(r=>r.merchant_match===merchantKey)||null):null;
+ const previousChoice={...choice,category:cat,subcategory:sub,personTag:person};
  const btn=root.querySelector("#txSaveCard");if(btn)btn.disabled=true;
+ actionBusy=true;
  try{
-  const result=await persist(tx,cat,sub,choice.kind,remember);
+  const result=await persist(tx,cat,sub,choice.kind,remember,person);
   if(!result){if(btn)btn.disabled=false;return;}
-  choice.id=null;notice("Saved! Nice work.");
+  undoStack.push({type:"save",txId:tx.id,before,previousChoice,merchantKey,
+   remembered:remember&&stable,ruleBefore});
+  revisitId=null;choice.id=null;notice("Saved. You can always undo the last card.");
   render();
   if(typeof currentView!=="undefined"&&currentView==="home")renderHome();
   if(document.getElementById("txCategorySettings"))renderCategorySettings();
- }catch(e){notice("Could not save: "+e.message,true);if(btn)btn.disabled=false;}
+ }catch(error){notice("Could not save: "+error.message,true);if(btn)btn.disabled=false;}
+ finally{actionBusy=false;}
 }
 function skipCurrent(){
+ if(actionBusy)return;
  const tx=selectedReview();if(!tx)return;
- skipped.add(tx.id);choice.id=null;notice("");
- render();
+ undoStack.push({type:"skip",txId:tx.id,previousChoice:{...choice}});
+ skipped.add(tx.id);revisitId=null;choice.id=null;notice("");render();
+}
+async function undoLast(){
+ if(actionBusy||!undoStack.length)return;
+ const last=undoStack[undoStack.length-1];
+ const tx=rows.find(t=>t.id===last.txId);
+ if(!tx){notice("Previous transaction not found. Reload the page.",true);return;}
+ actionBusy=true;
+ try{
+  if(last.type==="save"){
+   const restore=await client.from("horst_transactions").update({
+    ...last.before,updated_at:new Date().toISOString()
+   }).eq("owner_id",user.id).eq("id",last.txId).select("id");
+   if(restore.error)throw restore.error;
+   if(!restore.data?.length)throw new Error("The transaction could not be restored.");
+   Object.assign(tx,last.before);
+   if(last.remembered){
+    let ruleResult;
+    if(last.ruleBefore){
+     const {id,created_at,...old}=last.ruleBefore;
+     ruleResult=await client.from("horst_transaction_rules").upsert(old,{onConflict:"owner_id,merchant_match"});
+    }else{
+     ruleResult=await client.from("horst_transaction_rules").delete()
+      .eq("owner_id",user.id).eq("merchant_match",last.merchantKey);
+    }
+    if(ruleResult.error)throw new Error("Transaction restored; merchant rule could not be reversed: "+ruleResult.error.message);
+    const allRules=await client.from("horst_transaction_rules").select("*").eq("owner_id",user.id);
+    if(!allRules.error)rules=allRules.data||[];
+   }
+  }
+  skipped.delete(last.txId);
+  undoStack.pop();
+  if(!dateScope().some(t=>t.id===last.txId))filter.mode="all";
+  revisitId=last.txId;
+  choice={...last.previousChoice};
+  notice(last.type==="save"?"Last classification undone. Review it again.":"Back to the previous card.");
+  render();
+  if(typeof currentView!=="undefined"&&currentView==="home")renderHome();
+ }catch(error){notice("Undo could not finish: "+error.message,true);}
+ finally{actionBusy=false;}
 }
 function sumBeforeRange(){
  const data=dateScope();
@@ -477,6 +536,7 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choiceSub!==undefined){choose("subcategory",decodeURIComponent(el.dataset.choiceSub));return;}
  if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
+ if(el.id==="txUndoAction"){await undoLast();return;}
  if(el.id==="txSaveCard"){await saveCurrent();return;}
  if(el.id==="txSkipCard"){skipCurrent();return;}
  if(el.id==="txReviewSkipped"){skipped=new Set();render();return;}
@@ -550,6 +610,7 @@ root.addEventListener("pointerup",e=>{
 document.addEventListener("keydown",e=>{
  if(typeof currentView==="undefined"||currentView!=="transactions"||!user)return;
  if(e.target.closest("input,textarea,select,[contenteditable]"))return;
+ if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)){e.preventDefault();undoLast();return;}
  if(e.key==="ArrowRight"){e.preventDefault();saveCurrent();}
  if(e.key==="ArrowLeft"){e.preventDefault();skipCurrent();}
 });
