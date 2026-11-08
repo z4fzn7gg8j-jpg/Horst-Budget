@@ -20,11 +20,11 @@
   };
   const init=async ()=>{
     showGate();
-    if(!window.supabase || !window.supabase.createClient || !window.DEFAULT_SETTINGS){
+    if(!window.supabase || !window.supabase.createClient || typeof DEFAULT_SETTINGS === "undefined"){
       text("Secure sign-in could not load. Please refresh the page.",true);return;
     }
     client=window.supabase.createClient(
-      window.DEFAULT_SETTINGS.supabaseUrl,window.DEFAULT_SETTINGS.supabaseKey,
+      DEFAULT_SETTINGS.supabaseUrl,DEFAULT_SETTINGS.supabaseKey,
       {auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,
         storageKey:"horst-budget-private-tx"}}
     );
@@ -50,7 +50,7 @@
           if(["home","plan","transactions","bills","history","settings"].includes(wanted)){
             setView(wanted);
           }
-          window.horstEnhancements?.renderHomeSummary?.();
+          if(window.horstTransactions?.preload)await window.horstTransactions.preload();
         }
       }catch(error){showGate();text(error.message||"Authentication failed. Try again.",true);}
       finally{checking=false;}
@@ -91,6 +91,7 @@
       started=false;
       showGate();
       text("Signed out.");
+      window.location.reload();
     };
     document.addEventListener("click",e=>{
       const target=e.target.closest("#siteSignOut");
