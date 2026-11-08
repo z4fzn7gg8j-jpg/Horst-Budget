@@ -427,6 +427,12 @@ function renderInsights(){
  }).join(""):'<div class="tx-empty-spend">Your spending breakdown will appear as transactions are imported and reviewed.</div>';
  return '<section class="tx-insights"><div class="tx-section-heading"><div><p class="tx-kicker">THE BIG PICTURE</p><h2>Where your money goes</h2></div>'+
  '<span class="tx-period-badge">'+safe(periodLabel())+'</span></div>'+
+ '<div class="tx-payment-cards">'+
+ '<div class="tx-payment-card daily"><small>Everyday purchases</small><strong>'+money(sum.everyday)+'</strong></div>'+
+ '<div class="tx-payment-card bill"><small>Bills paid</small><strong>'+money(sum.billsPaid)+'</strong></div>'+
+ '<div class="tx-payment-card debt"><small>Debt payments</small><strong>'+money(sum.debtPaid)+'</strong></div>'+
+ '</div>'+
+ '<p class="tx-payment-caption">Debt payments are counted once, even when both accounts record the transfer. Payments are separate from new purchases.</p>'+
  '<div class="tx-insights-grid"><div class="tx-spending-hero"><div class="tx-spend-kicker">TOTAL SPENDING</div>'+
  '<div class="tx-spend-amount">'+metric+'</div>'+
  '<p class="tx-muted">'+safe(note)+'</p>'+
@@ -448,9 +454,10 @@ function historyRows(){
  return sorted.map(t=>{
  const isEditing=editHistoryId===t.id;
  const label=[t.category||"Not categorized",t.subcategory].filter(Boolean).join(" / ");
+ const purposeLabel={debt:"Debt payment",bill:"Bill payment",internal:"Transfer",refund:"Refund",income:"Income"}[classifyPayment(t)]||"";
  return '<div class="tx-history-row"><div class="tx-history-main"><div><strong>'+safe(t.merchant)+'</strong>'+
  '<small>'+safe(dateLabel(t.txn_date))+' · '+safe(t.account_name||"")+'</small>'+
- '<span class="tx-history-category">'+safe(label)+(t.kind==="transfer"?" · Transfer":"")+'</span>'+(t.person_tag?'<small>Person: '+safe(t.person_tag)+'</small>':'')+'</div>'+
+ '<span class="tx-history-category">'+safe(label)+(purposeLabel?" · "+purposeLabel:"")+'</span>'+(t.person_tag?'<small>Person: '+safe(t.person_tag)+'</small>':'')+'</div>'+
  '<div class="tx-history-right"><strong>'+money(t.amount)+'</strong><button type="button" data-edit-tx="'+safe(t.id)+'">'+(isEditing?"Close":"Edit")+'</button></div></div>'+
  (isEditing?'<form class="tx-history-form" data-edit-form="'+safe(t.id)+'">'+
  '<label>Category<input class="tx-clean-input" name="category" value="'+safe(t.category||"")+'" required maxlength="80"></label>'+
@@ -577,8 +584,11 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  if(!category){notice("Choose a category or type your own first.",true);return false;}
  if(category.length>80||subcategory.length>80){notice("Category names must be 80 characters or less.",true);return false;}
  if(!["expense","transfer","income","refund"].includes(kind))kind="expense";
+ const purpose=classifyPayment({...tx,category,subcategory,kind});
+ const savedKind=(purpose==="debt"||purpose==="internal")?"transfer":purpose==="refund"?"refund":kind;
  const update=await client.from("horst_transactions").update({
-  category,subcategory:subcategory||null,person_tag:personTag||null,kind,exclude_from_spending:kind==="transfer",
+  category,subcategory:subcategory||null,person_tag:personTag||null,kind:savedKind,
+  payment_purpose:purpose,exclude_from_spending:savedKind==="transfer",
   review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString(),
   updated_at:new Date().toISOString()
  }).eq("id",tx.id).eq("owner_id",user.id).select("id");
@@ -589,18 +599,18 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  if(remember&&stable){
   const rule=await client.from("horst_transaction_rules").upsert({
    owner_id:user.id,merchant_match:normalizedRuleText(tx.merchant),match_context:ruleContext(tx),category,
-   subcategory:subcategory||null,kind,exclude_from_spending:kind==="transfer",enabled:true
+   subcategory:subcategory||null,kind:savedKind,payment_purpose:purpose,exclude_from_spending:savedKind==="transfer",enabled:true
   },{onConflict:"owner_id,merchant_match,match_context"}).select("*").single();
   if(rule.error)throw rule.error;
   const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match&&r.match_context===rule.data.match_context);
   if(index>=0)rules[index]=rule.data;else rules.push(rule.data);
  }
  const local=rows.find(t=>t.id===tx.id);
- if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind,
-  exclude_from_spending:kind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
+ if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind:savedKind,payment_purpose:purpose,
+  exclude_from_spending:savedKind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
  return true;
 }
-const txnUndoFields=["category","subcategory","person_tag","kind","exclude_from_spending","review_status",
+const txnUndoFields=["category","subcategory","person_tag","kind","payment_purpose","exclude_from_spending","review_status",
  "classification_origin","reviewed_at"];
 function snapshotTxn(tx){
  const data={};
