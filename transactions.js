@@ -13,7 +13,7 @@ const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth
 const categoryName=x=>String(x||"").trim();
 const key=x=>categoryName(x).toLocaleLowerCase();
 const isValidColor=c=>/^#[0-9a-f]{6}$/i.test(c||"");
-let client=null,user=null,rows=[],rules=[],categories=[],loaded=false,loading=false;
+let client=null,user=null,rows=[],rules=[],categories=[],accounts=[],loaded=false,loading=false;
 let filter={mode:"all",month:today(),year:String(new Date().getFullYear()),start:"",end:""};
 let draftFilter={...filter};
 let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,editingCategoryId=null;
@@ -21,6 +21,7 @@ let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
 let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false,editingRecurringId=null,rememberCurrent=false;
+let customEditorType=null, customEntryText="",reviewScrollY=0,categoryPage=0,subcategoryPage=0,personPage=0;
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
@@ -41,23 +42,103 @@ function periodLabel(){
  if(filter.mode==="year")return filter.year;
  return [filter.start||"Any date",filter.end||"Today"].join(" – ");
 }
+function accountType(tx){
+ if(!tx)return "other";
+ let found=tx.source_account_id?accounts.find(a=>a.source_account_id===tx.source_account_id):null;
+ if(!found){
+  const matching=accounts.filter(a=>key(a.name)===key(tx.account_name));
+  if(matching.length===1)found=matching[0];
+  else if(matching.length>1&&matching.every(a=>a.account_type===matching[0].account_type))found=matching[0];
+ }
+ return found?.account_type||"other";
+}
+function classifyPayment(tx){
+ if(tx.pending)return "pending";
+ const description=(String(tx.description||"")+" "+String(tx.merchant||"")).toLowerCase();
+ const amount=Number(tx.amount)||0,account=accountType(tx);
+ const category=key(tx.category);
+ const knownBills=/^(bills?(&| and)?utilities|subscriptions?|insurance|housing|utilities?)$/.test(category.replace(/\s+/g,""))||
+   ["bills & utilities","bills and utilities","utilities","subscriptions","insurance","housing"].includes(category);
+ const knownPersonal=!!category&&!knownBills;
+ const refund=/\b(refund|reversal|returned|return credit|cashback|cash back|reward|credit adjustment|statement credit)\b/.test(description);
+ const interestFee=/\b(interest|finance charge|service fee|late fee|cash advance fee|overdraft fee)\b/.test(description);
+ const debtPay=/\b(credit card payment|card payment|payment to visa|payment from checking|affirm payment|loan payment|payment received|autopay)\b/.test(description)||
+   (/\bpayment\b/.test(description)&&/\b(visa|credit|card|affirm|discover|chase)\b/.test(description));
+ const utilityMerchant=/\b(southwest gas|orbitel communications|electric company|water utility)\b/.test(description);
+ if(account==="credit_card"){
+  if(amount>0)return debtPay?"debt":(refund||tx.kind==="refund")?"refund":"debt";
+  if(interestFee)return "purchase";
+  if(tx.kind==="transfer")return "internal";
+  return knownBills?"bill":"purchase";
+ }
+ if(account==="checking"||account==="savings"){
+  if(amount<0){
+   if(debtPay)return "debt";
+   if(knownBills||(!knownPersonal&&utilityMerchant))return "bill";
+   if(tx.kind==="transfer")return "internal";
+   return "purchase";
+  }
+  if(amount>0){
+   if(refund||tx.kind==="refund")return "refund";
+   if(tx.kind==="transfer")return "internal";
+   return "income";
+  }
+ }
+ if(account==="loan"){
+  if(amount>0&&!refund)return "debt";
+  if(refund)return "refund";
+  if(tx.kind==="transfer")return "internal";
+ }
+ if(tx.kind==="refund")return "refund";
+ if(tx.kind==="income")return "income";
+ if(tx.kind==="transfer"){
+  return debtPay?"debt":"internal";
+ }
+ if(knownBills||(!knownPersonal&&utilityMerchant))return "bill";
+ return "purchase";
+}
 function spend(t){
- if(t.pending||t.exclude_from_spending||["transfer","income"].includes(t.kind))return 0;
- if(t.kind==="refund")return -Math.abs(Number(t.amount)||0);
+ const purpose=classifyPayment(t);
+ if(purpose==="pending"||purpose==="internal"||purpose==="debt"||purpose==="income")return 0;
+ if(purpose==="refund")return -Math.abs(Number(t.amount)||0);
  return Math.abs(Number(t.amount)||0);
 }
 function summary(list){
  const byCat={},bySub={},byPerson={};
- let total=0;
+ let total=0,everyday=0,billsPaid=0,debtPaid=0;
+ // Credit-card/loan repayments are counted from the receiving account when present.
+ // Checking-side debt repayments are counted only when an equivalent receipt is not present.
+ const receipts=list.filter(t=>!t.pending&&(accountType(t)==="credit_card"||accountType(t)==="loan")&&
+  Number(t.amount)>0&&classifyPayment(t)==="debt");
+ const usedReceipts=new Set();
+ const dateGap=(a,b)=>Math.abs((Date.parse(a+"T12:00:00Z")-Date.parse(b+"T12:00:00Z"))/86400000);
+ const matchedOutgoing=new Set();
  for(const t of list){
-   const value=spend(t);if(!value)continue;
-   total+=value;
-   const cat=t.category||"Needs review",sub=t.subcategory||"Other";
-   byCat[cat]=(byCat[cat]||0)+value;
-   if(t.person_tag){const who=t.person_tag.trim();if(who)byPerson[who]=(byPerson[who]||0)+value;}
-   const k=cat+"\u0001"+sub;bySub[k]=(bySub[k]||0)+value;
+  const purpose=classifyPayment(t);
+  if(purpose==="pending")continue;
+  if(purpose==="debt"&&(accountType(t)==="checking"||accountType(t)==="savings")&&Number(t.amount)<0){
+   const index=receipts.findIndex((r,i)=>!usedReceipts.has(i)&&
+    Math.abs(Math.abs(Number(r.amount))-Math.abs(Number(t.amount)))<.02&&dateGap(r.txn_date,t.txn_date)<=4);
+   if(index>=0){usedReceipts.add(index);matchedOutgoing.add(t.id);}
+  }
  }
- return {total,byCat,bySub,byPerson};
+ for(const t of list){
+  const purpose=classifyPayment(t),value=spend(t);
+  if(purpose==="debt"&&!t.pending){
+   const amount=Math.abs(Number(t.amount)||0);
+   if((accountType(t)==="credit_card"||accountType(t)==="loan")&&Number(t.amount)>0)debtPaid+=amount;
+   else if((accountType(t)==="checking"||accountType(t)==="savings"||accountType(t)==="other")&&Number(t.amount)<0&&!matchedOutgoing.has(t.id))debtPaid+=amount;
+  }
+  if(!value)continue;
+  total+=value;
+  if(purpose==="bill")billsPaid+=value;
+  else everyday+=value;
+  const cat=t.category||"Needs review",sub=t.subcategory||"Other";
+  byCat[cat]=(byCat[cat]||0)+value;
+  if(t.person_tag){const who=t.person_tag.trim();if(who)byPerson[who]=(byPerson[who]||0)+value;}
+  const k=cat+"\u0001"+sub;bySub[k]=(bySub[k]||0)+value;
+ }
+ return {total,everyday,billsPaid,debtPaid,byCat,bySub,byPerson};
 }
 function upcomingSubscriptions(){
  const now=new Date(),todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate());
@@ -74,8 +155,12 @@ function trackedPeople(){
  return [...names.values()].sort((a,b)=>a.localeCompare(b));
 }
 function personChoices(){
- return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
- '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
+ const names=trackedPeople();
+ if(choice.personTag&&!names.some(name=>key(name)===key(choice.personTag)))names.push(choice.personTag);
+ const shown=names.length>5?names.slice(personPage*5,personPage*5+5):names;
+ return shown.map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
+ '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("")+
+ (names.length>5?'<button type="button" class="tx-add-choice tx-more-choice" data-next-choices="person">More · '+(personPage+1)+'/'+Math.ceil(names.length/5)+'</button>':'');
 }
 function classifyStream(r){
  if(["bill","subscription","recurring"].includes(r.display_type))return r.display_type;
@@ -123,6 +208,29 @@ function renderRecurringBills(){
  const count=document.getElementById("billMainCount");
  if(count&&manual.length)count.textContent="("+manual.filter(b=>!["annual","semiannual","subscription"].includes(b.type)).length+" planned + "+planned.length+" detected)";
 }
+// Stable, charge-specific key: merchant + payment purpose + account + description.
+// Purchases also require the same amount to prevent blanket restaurant/store rules.
+// Interest/fees/payments do NOT require the same dollar amount.
+function chargePurpose(tx){
+ const full=(String(tx.description||"")+" "+String(tx.merchant||"")).toLowerCase();
+ if(/\binterest\b|finance charge|interest charged/.test(full))return "interest";
+ if(/\bfee\b|late charge|overdraft|service charge/.test(full))return "fee";
+ if(/\bpayment\b|\bautopay\b|\bpayoff\b/.test(full))return "payment";
+ if(/\brefund\b|\breversal\b|\breturn\b/.test(full))return "refund";
+ if(tx.kind==="transfer"||/\btransfer\b|\bwithdrawal\b/.test(full))return "transfer";
+ if(tx.kind==="income")return "income";
+ if(tx.kind==="refund")return "refund";
+ return "purchase";
+}
+function normalizedRuleText(value){
+ return String(value||"").trim().toLowerCase().replace(/\s+/g," ").replace(/[|]/g,"/");
+}
+function ruleContext(tx){
+ const purpose=chargePurpose(tx),account=normalizedRuleText(tx.account_name);
+ const descriptor=normalizedRuleText(tx.description||tx.merchant);
+ const amount=purpose==="purchase"?Math.abs(Number(tx.amount)||0).toFixed(2):"*";
+ return "v2|"+purpose+"|"+account+"|"+descriptor+"|"+amount;
+}
 function getOverview(){
  const current=today();
  const monthRows=rows.filter(t=>t.txn_date&&t.txn_date.startsWith(current));
@@ -130,7 +238,7 @@ function getOverview(){
  const ranked=Object.entries(sum.byCat).sort((a,b)=>b[1]-a[1]);
  return {loaded,imported:rows.length,spending:sum.total,topCategories:ranked.slice(0,3),
   toReview:rows.filter(t=>t.review_status!=="auto").length,monthRows:monthRows.length,
-  upcomingSubscriptions:upcomingSubscriptions(),recurringCount:recurring.length};
+  upcomingSubscriptions:upcomingSubscriptions(),recurringCount:recurring.length,billsPaid:sum.billsPaid,debtPaid:sum.debtPaid,everyday:sum.everyday};
 }
 function filteredReview(){
  return dateScope().filter(t=>t.review_status!=="auto").sort((a,b)=>b.txn_date.localeCompare(a.txn_date)||b.imported_at.localeCompare(a.imported_at));
@@ -141,8 +249,10 @@ function selectedReview(){
 }
 function takeChoice(tx){
  if(choice.id!==tx.id){
-   choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
+   const purpose=classifyPayment(tx);
+   choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:["internal","debt"].includes(purpose)?"transfer":purpose==="refund"?"refund":tx.kind||"expense",personTag:tx.person_tag||""};
    rememberCurrent=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;
+   categoryPage=0;subcategoryPage=0;personPage=0;
  }
 }
 function renderFilters(){
@@ -181,7 +291,8 @@ function categoryChips(){
  const normalizedHint=key(hint).replace(/[^a-z0-9]/g,"");
  const available=availableCategories();
  const matched=available.some(c=>normalizedHint===key(c.name).replace(/[^a-z0-9]/g,""));
- const chips=available.map(c=>{
+ const visible=available.length>6?available.slice(categoryPage*6,categoryPage*6+6):available;
+ const chips=visible.map(c=>{
   const suggested=!!normalizedHint&&normalizedHint===key(c.name).replace(/[^a-z0-9]/g,"");
   const selected=key(choice.category)===key(c.name);
   return '<button class="tx-choice'+(selected?" selected":"")+(suggested&&!selected?" suggested":"")+
@@ -196,15 +307,23 @@ function categoryChips(){
    ' style="--chip-color:'+safe(colorFor(hint))+'"><span class="tx-suggest-star" aria-hidden="true">✦</span> Suggested: '+
    safe(hint)+'</button>');
  }
+ if(choice.category&&!available.some(c=>key(c.name)===key(choice.category))&&key(choice.category)!==key(hint)){
+  chips.push('<button class="tx-choice selected" data-choice-category="'+enc(choice.category)+'" type="button" style="--chip-color:'+colorFor(choice.category)+'">'+safe(choice.category)+'</button>');
+ }
+ if(available.length>6)chips.push('<button class="tx-add-choice tx-more-choice" type="button" data-next-choices="category" title="More categories">More · '+(categoryPage+1)+'/'+Math.ceil(available.length/6)+'</button>');
  return chips.join("");
 }
 function subcategoryChips(){
  const cat=categories.find(c=>key(c.name)===key(choice.category));
  const subs=cat?cat.subcategories||[]:[];
- if(!subs.length)return '';
- return subs.map(name=>
+ if(!subs.length&&!choice.subcategory)return '';
+ const list=subs.slice();
+ if(choice.subcategory&&!list.some(name=>key(name)===key(choice.subcategory)))list.push(choice.subcategory);
+ const shown=list.length>5?list.slice(subcategoryPage*5,subcategoryPage*5+5):list;
+ return shown.map(name=>
  '<button type="button" class="tx-choice tx-subchoice '+(key(choice.subcategory)===key(name)?"selected":"")+
- '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("");
+ '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("")+
+ (list.length>5?'<button type="button" class="tx-add-choice tx-more-choice" data-next-choices="subcategory">More · '+(subcategoryPage+1)+'/'+Math.ceil(list.length/5)+'</button>':'');
 }
 function kindChips(){
  return ["expense","transfer","income","refund"].map(k=>
@@ -214,11 +333,35 @@ function kindChips(){
 function undoMarkup(){
  return undoStack.length?'<button id="txUndoAction" class="tx-undo" type="button" aria-label="Undo last transaction">↶ Undo</button>':'';
 }
-function addOption(type,open,placeholder){
- const value=type==='Category'?choice.category:type==='Subcategory'?choice.subcategory:choice.personTag;
- return open?'<div class="tx-custom-entry"><input class="tx-clean-input" id="txReview'+type+'" maxlength="80" autocomplete="off" placeholder="'+placeholder+'" value="'+safe(value)+'">'+
- '<button class="tx-input-close" type="button" data-close-custom="'+type+'" aria-label="Close">×</button></div>':
- '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+function addOption(type){
+ return '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+}
+function editorMarkup(){
+ if(!customEditorType)return '';
+ const type=customEditorType;
+ const fieldName=type==='Category'?'Category':type==='Subcategory'?'Subcategory':'Person';
+ const prompt=type==='Category'?'Enter a category name':type==='Subcategory'?'Enter a subcategory':'Who was it for?';
+ return '<div class="tx-editor-cover" id="txEditorCover" role="dialog" aria-modal="true" aria-label="Add '+fieldName+'">'+
+  '<form id="txEditorForm" class="tx-editor-pane" autocomplete="off">'+
+  '<div class="tx-editor-label">ADD '+fieldName.toUpperCase()+'</div>'+
+  '<label for="txEditorInput">'+safe(prompt)+'</label>'+
+  '<input id="txEditorInput" type="text" inputmode="text" enterkeyhint="done" maxlength="80" required value="'+safe(customEntryText)+'" placeholder="'+safe(prompt)+'">'+
+  '<div class="tx-editor-actions"><button type="button" id="txEditorCancel">Cancel</button><button type="submit">Done</button></div>'+
+  '</form></div>';
+}
+function closeCustomEditor(){
+ customEditorType=null;customEntryText="";
+ refreshReviewOverlay();
+}
+function commitCustomEditor(){
+ if(!customEditorType)return;
+ const input=root.querySelector("#txEditorInput"),value=(input?.value||"").trim();
+ if(!value){input?.focus();return;}
+ if(customEditorType==='Category'){choice.category=value;choice.subcategory='';}
+ else if(customEditorType==='Subcategory')choice.subcategory=value;
+ else choice.personTag=value;
+ document.activeElement?.blur();
+ closeCustomEditor();
 }
 function reviewOverlay(){
  if(!reviewOpen)return '';
@@ -241,17 +384,17 @@ function reviewOverlay(){
  '<div class="tx-review-amount">'+(Number(tx.amount)<0?'−':Number(tx.amount)>0?'+':'')+money(Math.abs(Number(tx.amount)))+'</div>'+
  '<div class="tx-review-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div></div>'+
  '<div class="tx-review-fields">'+
- '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category',customCategoryOpen,'New category')+'</div></div>'+
- '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory',customSubOpen,'New subcategory')+'</div></div>'+
- '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person',customPersonOpen,'Who was it for?')+'</div></div>'+
+ '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category')+'</div></div>'+
+ '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory')+'</div></div>'+
+ '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person')+'</div></div>'+
  '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
  '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
- (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember this merchant</label>':'')+
+ (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember similar charges <small>(type + account'+(chargePurpose(tx)==="purchase"?' + amount':'')+')</small></label>':'')+
  '</div></article><footer class="tx-review-bottom">'+
  '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
  '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
  '<button id="txSaveCard" class="tx-save" type="button">Save & next <span>→</span></button></div>'+
- '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div></div>';
+ '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div>'+editorMarkup()+'</div>';
 }
 function reviewerHtml(){
  const count=filteredReview().length;
@@ -284,6 +427,12 @@ function renderInsights(){
  }).join(""):'<div class="tx-empty-spend">Your spending breakdown will appear as transactions are imported and reviewed.</div>';
  return '<section class="tx-insights"><div class="tx-section-heading"><div><p class="tx-kicker">THE BIG PICTURE</p><h2>Where your money goes</h2></div>'+
  '<span class="tx-period-badge">'+safe(periodLabel())+'</span></div>'+
+ '<div class="tx-payment-cards">'+
+ '<div class="tx-payment-card daily"><small>Everyday purchases</small><strong>'+money(sum.everyday)+'</strong></div>'+
+ '<div class="tx-payment-card bill"><small>Bills paid</small><strong>'+money(sum.billsPaid)+'</strong></div>'+
+ '<div class="tx-payment-card debt"><small>Debt payments</small><strong>'+money(sum.debtPaid)+'</strong></div>'+
+ '</div>'+
+ '<p class="tx-payment-caption">Debt payments are counted once, even when both accounts record the transfer. Payments are separate from new purchases.</p>'+
  '<div class="tx-insights-grid"><div class="tx-spending-hero"><div class="tx-spend-kicker">TOTAL SPENDING</div>'+
  '<div class="tx-spend-amount">'+metric+'</div>'+
  '<p class="tx-muted">'+safe(note)+'</p>'+
@@ -305,9 +454,10 @@ function historyRows(){
  return sorted.map(t=>{
  const isEditing=editHistoryId===t.id;
  const label=[t.category||"Not categorized",t.subcategory].filter(Boolean).join(" / ");
+ const purposeLabel={debt:"Debt payment",bill:"Bill payment",internal:"Transfer",refund:"Refund",income:"Income"}[classifyPayment(t)]||"";
  return '<div class="tx-history-row"><div class="tx-history-main"><div><strong>'+safe(t.merchant)+'</strong>'+
  '<small>'+safe(dateLabel(t.txn_date))+' · '+safe(t.account_name||"")+'</small>'+
- '<span class="tx-history-category">'+safe(label)+(t.kind==="transfer"?" · Transfer":"")+'</span>'+(t.person_tag?'<small>Person: '+safe(t.person_tag)+'</small>':'')+'</div>'+
+ '<span class="tx-history-category">'+safe(label)+(purposeLabel?" · "+purposeLabel:"")+'</span>'+(t.person_tag?'<small>Person: '+safe(t.person_tag)+'</small>':'')+'</div>'+
  '<div class="tx-history-right"><strong>'+money(t.amount)+'</strong><button type="button" data-edit-tx="'+safe(t.id)+'">'+(isEditing?"Close":"Edit")+'</button></div></div>'+
  (isEditing?'<form class="tx-history-form" data-edit-form="'+safe(t.id)+'">'+
  '<label>Category<input class="tx-clean-input" name="category" value="'+safe(t.category||"")+'" required maxlength="80"></label>'+
@@ -337,7 +487,14 @@ function renderDashboard(){
  '<div id="txHistoryRows">'+historyRows()+'</div></div></details>')+
  '</div>';
  renderFilters();
+ const hadReviewLock=document.body.classList.contains("tx-review-open");
  document.body.classList.toggle("tx-review-open",reviewOpen);
+ if(reviewOpen){
+  document.body.style.top="-"+reviewScrollY+"px";
+ }else if(hadReviewLock){
+  document.body.style.top="";
+  window.scrollTo({top:reviewScrollY,behavior:"instant"});
+ }
 }
 function render(){
  if(!user){root.innerHTML='<div class="tx-loading">Sign in to view your transactions.</div>';return;}
@@ -350,12 +507,13 @@ async function loadData(){
   client.from("horst_transactions").select("*").eq("owner_id",user.id).order("txn_date",{ascending:false}).limit(5000),
   client.from("horst_transaction_rules").select("*").eq("owner_id",user.id).limit(1000),
   client.from("horst_budget_categories").select("*").eq("owner_id",user.id).order("position",{ascending:true}),
-  client.from("horst_recurring_streams").select("*").eq("owner_id",user.id).limit(500)
+  client.from("horst_recurring_streams").select("*").eq("owner_id",user.id).limit(500),
+  client.from("horst_budget_accounts").select("*").eq("owner_id",user.id).order("name",{ascending:true})
  ]);
  loading=false;
  const error=values.find(x=>x.error);
  if(error){notice("Couldn't load private data: "+error.error.message,true);render();return;}
- rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];recurring=values[3].data||[];
+ rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];recurring=values[3].data||[];accounts=values[4].data||[];
  loaded=true;
  noticeText="";noticeBad=false;
  render();
@@ -363,6 +521,7 @@ async function loadData(){
  renderRecurringBills();
  const panel=document.getElementById("txCategorySettings");
  if(panel)renderCategorySettings();
+ if(document.getElementById("txAccountsSettings"))renderAccountsSettings();
 }
 async function preload(){
  if(openPromise)return openPromise;
@@ -386,7 +545,7 @@ function refreshReviewOverlay(){
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
- if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;}
+ if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;subcategoryPage=0;}
  if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;customSubOpen=false;}
  if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;customPersonOpen=false;}
  if(kind==="kind"){choice.kind=value;}
@@ -425,8 +584,11 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  if(!category){notice("Choose a category or type your own first.",true);return false;}
  if(category.length>80||subcategory.length>80){notice("Category names must be 80 characters or less.",true);return false;}
  if(!["expense","transfer","income","refund"].includes(kind))kind="expense";
+ const purpose=classifyPayment({...tx,category,subcategory,kind});
+ const savedKind=(purpose==="debt"||purpose==="internal")?"transfer":purpose==="refund"?"refund":purpose==="income"?"income":"expense";
  const update=await client.from("horst_transactions").update({
-  category,subcategory:subcategory||null,person_tag:personTag||null,kind,exclude_from_spending:kind==="transfer",
+  category,subcategory:subcategory||null,person_tag:personTag||null,kind:savedKind,
+  payment_purpose:purpose,exclude_from_spending:savedKind==="transfer",
   review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString(),
   updated_at:new Date().toISOString()
  }).eq("id",tx.id).eq("owner_id",user.id).select("id");
@@ -436,19 +598,19 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
  if(remember&&stable){
   const rule=await client.from("horst_transaction_rules").upsert({
-   owner_id:user.id,merchant_match:tx.merchant.trim().toLowerCase(),category,
-   subcategory:subcategory||null,kind,exclude_from_spending:kind==="transfer",enabled:true
-  },{onConflict:"owner_id,merchant_match"}).select("*").single();
+   owner_id:user.id,merchant_match:normalizedRuleText(tx.merchant),match_context:ruleContext(tx),category,
+   subcategory:subcategory||null,kind:savedKind,payment_purpose:purpose,exclude_from_spending:savedKind==="transfer",enabled:true
+  },{onConflict:"owner_id,merchant_match,match_context"}).select("*").single();
   if(rule.error)throw rule.error;
-  const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match);
+  const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match&&r.match_context===rule.data.match_context);
   if(index>=0)rules[index]=rule.data;else rules.push(rule.data);
  }
  const local=rows.find(t=>t.id===tx.id);
- if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind,
-  exclude_from_spending:kind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
+ if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind:savedKind,payment_purpose:purpose,
+  exclude_from_spending:savedKind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
  return true;
 }
-const txnUndoFields=["category","subcategory","person_tag","kind","exclude_from_spending","review_status",
+const txnUndoFields=["category","subcategory","person_tag","kind","payment_purpose","exclude_from_spending","review_status",
  "classification_origin","reviewed_at"];
 function snapshotTxn(tx){
  const data={};
@@ -462,17 +624,17 @@ async function saveCurrent(){
  const sub=root.querySelector("#txReviewSubcategory")?.value??choice.subcategory;
  const person=root.querySelector("#txReviewPerson")?.value??choice.personTag;
  const remember=!!root.querySelector("#txRememberMerchant")?.checked;
- const merchantKey=String(tx.merchant||"").trim().toLowerCase();
+ const merchantKey=normalizedRuleText(tx.merchant),matchContext=ruleContext(tx);
  const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
  const before=snapshotTxn(tx);
- const ruleBefore=remember&&stable?structuredClone(rules.find(r=>r.merchant_match===merchantKey)||null):null;
+ const ruleBefore=remember&&stable?structuredClone(rules.find(r=>r.merchant_match===merchantKey&&r.match_context===matchContext)||null):null;
  const previousChoice={...choice,category:cat,subcategory:sub,personTag:person};
  const btn=root.querySelector("#txSaveCard");if(btn)btn.disabled=true;
  actionBusy=true;
  try{
   const result=await persist(tx,cat,sub,choice.kind,remember,person);
   if(!result){if(btn)btn.disabled=false;return;}
-  undoStack.push({type:"save",txId:tx.id,before,previousChoice,merchantKey,
+  undoStack.push({type:"save",txId:tx.id,before,previousChoice,merchantKey,matchContext,
    remembered:remember&&stable,ruleBefore});
   revisitId=null;choice.id=null;notice("Saved. You can always undo the last card.");
   render();
@@ -505,10 +667,10 @@ async function undoLast(){
     let ruleResult;
     if(last.ruleBefore){
      const {id,created_at,...old}=last.ruleBefore;
-     ruleResult=await client.from("horst_transaction_rules").upsert(old,{onConflict:"owner_id,merchant_match"});
+     ruleResult=await client.from("horst_transaction_rules").upsert(old,{onConflict:"owner_id,merchant_match,match_context"});
     }else{
      ruleResult=await client.from("horst_transaction_rules").delete()
-      .eq("owner_id",user.id).eq("merchant_match",last.merchantKey);
+      .eq("owner_id",user.id).eq("merchant_match",last.merchantKey).eq("match_context",last.matchContext);
     }
     if(ruleResult.error)throw new Error("Transaction restored; merchant rule could not be reversed: "+ruleResult.error.message);
     const allRules=await client.from("horst_transaction_rules").select("*").eq("owner_id",user.id);
@@ -529,6 +691,25 @@ async function undoLast(){
 function sumBeforeRange(){
  const data=dateScope();
  return data.length;
+}
+function renderAccountsSettings(){
+ const container=document.getElementById("txAccountsSettings");
+ if(!container||!user)return;
+ const labels={credit_card:"Credit card",checking:"Checking",savings:"Savings",loan:"Loan",other:"Other"};
+ const counts=accounts.reduce((m,a)=>(m[a.account_type]=(m[a.account_type]||0)+1,m),{});
+ container.innerHTML='<div class="tx-settings-heading"><div><h2>Accounts & payment recognition</h2>'+
+ '<p>Types were detected from your connected financial accounts. Change one here only if it is wrong. There is nothing extra to select during transaction review.</p></div></div>'+
+ '<div class="tx-accounts-overview">'+
+ ['credit_card','checking','savings','loan'].filter(t=>counts[t]).map(t=>'<span class="tx-account-count '+t+'">'+counts[t]+' '+labels[t]+(counts[t]===1?"":"s")+'</span>').join("")+
+ '</div>'+
+ '<div class="tx-accounts-list">'+(accounts.length?accounts.map(a=>
+  '<div class="tx-account-row"><div class="tx-account-label"><strong>'+safe(a.name)+'</strong><small>'+safe(a.institution||"Connected account")+'</small></div>'+
+  '<select class="select-input" data-account-type="'+safe(a.id)+'" aria-label="Account type for '+safe(a.name)+'">'+
+  Object.entries(labels).map(([k,v])=>'<option value="'+k+'"'+(a.account_type===k?" selected":"")+'>'+v+'</option>').join("")+
+  '</select></div>'
+ ).join(""):'<p class="tx-muted">Account information is not available yet.</p>')+'</div>'+
+ '<p class="tx-muted">A positive credit-card transaction normally means a repayment. Refunds and credits are kept separate when their descriptions identify them. A debit from checking and the matching card credit are one debt payment, not two expenses.</p>'+
+ '<div id="txAccountsNotice" role="status" aria-live="polite"></div>';
 }
 function renderCategorySettings(){
  const node=document.getElementById("txCategorySettings");
@@ -629,12 +810,24 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txUndoAction"){await undoLast();return;}
- if(el.id==="txStartReview"){reviewOpen=true;notice("");render();return;}
- if(el.id==="txCloseReview"||el.id==="txReviewDone"){reviewOpen=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;notice("");render();return;}
+ if(el.id==="txStartReview"){reviewScrollY=window.scrollY;reviewOpen=true;notice("");render();return;}
+ if(el.id==="txEditorCancel"){document.activeElement?.blur();closeCustomEditor();return;}
+ if(el.dataset.nextChoices){
+  const group=el.dataset.nextChoices;
+  if(group==="category")categoryPage=(categoryPage+1)%Math.ceil(availableCategories().length/6);
+  if(group==="subcategory"){
+   const c=categories.find(c=>key(c.name)===key(choice.category));
+   subcategoryPage=(subcategoryPage+1)%Math.ceil(Math.max(1,(c?.subcategories||[]).length)/5);
+  }
+  if(group==="person")personPage=(personPage+1)%Math.ceil(trackedPeople().length/5);
+  refreshReviewOverlay();return;
+ }
+ if(el.id==="txCloseReview"||el.id==="txReviewDone"){document.activeElement?.blur();reviewOpen=false;customEditorType=null;notice("");render();return;}
  if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
-  const type=el.id.slice(5);if(type==="Category")customCategoryOpen=true;
-  if(type==="Subcategory")customSubOpen=true;if(type==="Person")customPersonOpen=true;
-  refreshReviewOverlay();const input=root.querySelector("#txReview"+type);input?.focus();return;
+  customEditorType=el.id.slice(5);customEntryText="";
+  refreshReviewOverlay();
+  root.querySelector("#txEditorInput")?.focus({preventScroll:true});
+  return;
  }
  if(el.dataset.closeCustom){
   const type=el.dataset.closeCustom;if(type==="Category")customCategoryOpen=false;
@@ -652,6 +845,7 @@ root.addEventListener("click",async event=>{
 });
 root.addEventListener("input",e=>{
  if(e.target.id==="txReviewCategory"){choice.category=e.target.value;}
+ if(e.target.id==="txEditorInput"){customEntryText=e.target.value;}
  if(e.target.id==="txReviewSubcategory"){choice.subcategory=e.target.value;}
  if(e.target.id==="txReviewPerson"){choice.personTag=e.target.value;}
  if(e.target.id==="txHistorySearch"){historySearch=e.target.value;renderHistoryRows();}
@@ -666,6 +860,7 @@ root.addEventListener("change",e=>{
 });
 root.addEventListener("submit",async e=>{
  const form=e.target;
+ if(form.id==="txEditorForm"){e.preventDefault();commitCustomEditor();return;}
  if(!form.matches(".tx-history-form"))return;
  e.preventDefault();const tx=rows.find(t=>t.id===form.dataset.editForm);if(!tx)return;
  const btn=form.querySelector('button[type="submit"]');btn.disabled=true;
@@ -688,6 +883,28 @@ document.addEventListener("click",async e=>{
  const res=await client.from("horst_recurring_streams").update({display_type:type}).eq("owner_id",user.id).eq("id",row.id).select("id");
  if(res.error||!res.data?.length){btn.disabled=false;alert("Could not save recurring type: "+(res.error?.message||"no row updated"));return;}
  row.display_type=type;editingRecurringId=null;renderRecurringBills();
+ if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
+});
+document.addEventListener("change",async e=>{
+ const select=e.target.closest("#txAccountsSettings [data-account-type]");
+ if(!select||!client||!user)return;
+ const account=accounts.find(a=>a.id===select.dataset.accountType);
+ if(!account)return;
+ const old=account.account_type,next=select.value;
+ if(!["checking","savings","credit_card","loan","other"].includes(next)||next===old)return;
+ select.disabled=true;
+ const result=await client.from("horst_budget_accounts").update({
+  account_type:next,manually_overridden:true,updated_at:new Date().toISOString()
+ }).eq("id",account.id).eq("owner_id",user.id).select("id");
+ if(result.error||!result.data?.length){
+  select.value=old;select.disabled=false;
+  const status=document.getElementById("txAccountsNotice");
+  if(status)status.textContent="Couldn't save account type. "+(result.error?.message||"Try again.");
+  return;
+ }
+ account.account_type=next;
+ renderAccountsSettings();
+ renderDashboard();
  if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
 });
 document.addEventListener("click",async e=>{
@@ -738,13 +955,14 @@ function animateReviewSwipe(direction){
 }
 root.addEventListener("pointerdown",e=>{
  const card=e.target.closest("#txSwipeCard");
- if(!reviewOpen||!card||e.target.closest("button,input,select,label,summary"))return;
+ if(!reviewOpen||!card||customEditorType||!e.target.closest("#txSwipeZone"))return;
  drag={id:e.pointerId,start:e.clientX,time:performance.now(),card};
 });
 root.addEventListener("pointermove",e=>{
  if(!drag||drag.id!==e.pointerId||!drag.card.isConnected)return;
  const dx=e.clientX-drag.start;
  if(Math.abs(dx)<8)return;
+ if(e.cancelable)e.preventDefault();
  const bounded=Math.max(-65,Math.min(65,dx*.45));
  drag.card.style.transition="none";
  drag.card.style.transform="translate3d("+bounded+"px,0,0)";
@@ -763,14 +981,18 @@ document.addEventListener("keydown",e=>{
  if(typeof currentView==="undefined"||currentView!=="transactions"||!user)return;
  if(e.target.closest("input,textarea,select,[contenteditable]"))return;
  if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&reviewOpen){e.preventDefault();undoLast();return;}
- if(e.key==="Escape"&&reviewOpen){reviewOpen=false;render();return;}
+ if(e.key==="Escape"&&reviewOpen){
+  if(customEditorType){document.activeElement?.blur();closeCustomEditor();}
+  else {reviewOpen=false;render();}
+  return;
+ }
  if(!reviewOpen)return;
  if(e.key==="ArrowRight"){e.preventDefault();animateReviewSwipe("right");}
  if(e.key==="ArrowLeft"){e.preventDefault();animateReviewSwipe("left");}
 });
 window.horstTransactions={
  preload,open:async()=>{await preload();render();},
- getOverview,renderCategorySettings,renderRecurringBills,
+ getOverview,renderCategorySettings,renderAccountsSettings,renderRecurringBills,
  refresh:async()=>{openPromise=null;await preload();}
 };
 })();
