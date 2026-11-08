@@ -692,6 +692,25 @@ function sumBeforeRange(){
  const data=dateScope();
  return data.length;
 }
+function renderAccountsSettings(){
+ const container=document.getElementById("txAccountsSettings");
+ if(!container||!user)return;
+ const labels={credit_card:"Credit card",checking:"Checking",savings:"Savings",loan:"Loan",other:"Other"};
+ const counts=accounts.reduce((m,a)=>(m[a.account_type]=(m[a.account_type]||0)+1,m),{});
+ container.innerHTML='<div class="tx-settings-heading"><div><h2>Accounts & payment recognition</h2>'+
+ '<p>Types were detected from your connected financial accounts. Change one here only if it is wrong. There is nothing extra to select during transaction review.</p></div></div>'+
+ '<div class="tx-accounts-overview">'+
+ ['credit_card','checking','savings','loan'].filter(t=>counts[t]).map(t=>'<span class="tx-account-count '+t+'">'+counts[t]+' '+labels[t]+(counts[t]===1?"":"s")+'</span>').join("")+
+ '</div>'+
+ '<div class="tx-accounts-list">'+(accounts.length?accounts.map(a=>
+  '<div class="tx-account-row"><div class="tx-account-label"><strong>'+safe(a.name)+'</strong><small>'+safe(a.institution||"Connected account")+'</small></div>'+
+  '<select class="select-input" data-account-type="'+safe(a.id)+'" aria-label="Account type for '+safe(a.name)+'">'+
+  Object.entries(labels).map(([k,v])=>'<option value="'+k+'"'+(a.account_type===k?" selected":"")+'>'+v+'</option>').join("")+
+  '</select></div>'
+ ).join(""):'<p class="tx-muted">Account information is not available yet.</p>')+'</div>'+
+ '<p class="tx-muted">A positive credit-card transaction normally means a repayment. Refunds and credits are kept separate when their descriptions identify them. A debit from checking and the matching card credit are one debt payment, not two expenses.</p>'+
+ '<div id="txAccountsNotice" role="status" aria-live="polite"></div>';
+}
 function renderCategorySettings(){
  const node=document.getElementById("txCategorySettings");
  if(!node||!user)return;
@@ -866,6 +885,28 @@ document.addEventListener("click",async e=>{
  row.display_type=type;editingRecurringId=null;renderRecurringBills();
  if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
 });
+document.addEventListener("change",async e=>{
+ const select=e.target.closest("#txAccountsSettings [data-account-type]");
+ if(!select||!client||!user)return;
+ const account=accounts.find(a=>a.id===select.dataset.accountType);
+ if(!account)return;
+ const old=account.account_type,next=select.value;
+ if(!["checking","savings","credit_card","loan","other"].includes(next)||next===old)return;
+ select.disabled=true;
+ const result=await client.from("horst_budget_accounts").update({
+  account_type:next,manually_overridden:true,updated_at:new Date().toISOString()
+ }).eq("id",account.id).eq("owner_id",user.id).select("id");
+ if(result.error||!result.data?.length){
+  select.value=old;select.disabled=false;
+  const status=document.getElementById("txAccountsNotice");
+  if(status)status.textContent="Couldn't save account type. "+(result.error?.message||"Try again.");
+  return;
+ }
+ account.account_type=next;
+ renderAccountsSettings();
+ renderDashboard();
+ if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
+});
 document.addEventListener("click",async e=>{
  const el=e.target.closest("button");if(!el)return;
  const panel=document.getElementById("txCategorySettings");if(!panel||!panel.contains(el))return;
@@ -951,7 +992,7 @@ document.addEventListener("keydown",e=>{
 });
 window.horstTransactions={
  preload,open:async()=>{await preload();render();},
- getOverview,renderCategorySettings,renderRecurringBills,
+ getOverview,renderCategorySettings,renderAccountsSettings,renderRecurringBills,
  refresh:async()=>{openPromise=null;await preload();}
 };
 })();
