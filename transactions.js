@@ -163,15 +163,40 @@ function renderFilters(){
  '<button type="button" data-apply-time="range" class="tx-mini-chip">Apply date range</button>'+
  '<p class="tx-muted">Your selection updates the review cards, spending charts, and transaction history together.</p>';
 }
+function formattedSuggestion(raw){
+ const id=String(raw||"").trim().toLowerCase().replace(/\s+/g,"_");
+ const mapped={
+  bills_utilities:"Bills & Utilities",dining_drinks:"Dining & Drinks",
+  health_wellness:"Health & Wellness",financial:"Financial",
+  transfers:"Transfers",travel:"Travel",income:"Income",
+  entertainment:"Entertainment",shopping:"Shopping",
+  services:"Services",transportation:"Transportation",
+  groceries:"Groceries",other:"Other",insurance:"Insurance",
+  education:"Education",family_kids:"Family & Kids"
+ };
+ return mapped[id]||id.split("_").filter(Boolean).map(w=>w[0].toUpperCase()+w.slice(1)).join(" ");
+}
 function categoryChips(){
- const tx=selectedReview(),hint=String(tx?.suggested_category||"").toLowerCase().replace(/[^a-z0-9]/g,"");
- return availableCategories().map(c=>{
-  const matched=!!hint&&hint===key(c.name).replace(/[^a-z0-9]/g,""),selected=key(choice.category)===key(c.name);
-  return '<button class="tx-choice'+(selected?' selected':'')+(matched&&!selected?' suggested':'')+
-    '" data-choice-category="'+enc(c.name)+'" type="button"'+(matched?' title="Suggested category"':'')+
-    ' style="--chip-color:'+safe(isValidColor(c.color)?c.color:colorFor(c.name))+'">'+safe(c.name)+
-    (matched&&!selected?'<span class="tx-suggest-star" aria-hidden="true"> ✦</span>':'')+'</button>';
- }).join("");
+ const tx=selectedReview(),hint=formattedSuggestion(tx?.suggested_category);
+ const normalizedHint=key(hint).replace(/[^a-z0-9]/g,"");
+ const available=availableCategories();
+ const matched=available.some(c=>normalizedHint===key(c.name).replace(/[^a-z0-9]/g,""));
+ const chips=available.map(c=>{
+  const suggested=!!normalizedHint&&normalizedHint===key(c.name).replace(/[^a-z0-9]/g,"");
+  const selected=key(choice.category)===key(c.name);
+  return '<button class="tx-choice'+(selected?" selected":"")+(suggested&&!selected?" suggested":"")+
+   '" data-choice-category="'+enc(c.name)+'" type="button"'+(suggested?' title="Suggested category"':'')+
+   ' style="--chip-color:'+safe(isValidColor(c.color)?c.color:colorFor(c.name))+'">'+safe(c.name)+
+   (suggested&&!selected?'<span class="tx-suggest-star" aria-hidden="true"> ✦</span>':'')+'</button>';
+ });
+ if(hint&&!matched){
+  const selected=key(choice.category)===key(hint);
+  chips.push('<button class="tx-choice tx-external-suggestion'+(selected?' selected':'')+
+   '" data-choice-category="'+enc(hint)+'" type="button" title="Suggested from the transaction data"'+
+   ' style="--chip-color:'+safe(colorFor(hint))+'"><span class="tx-suggest-star" aria-hidden="true">✦</span> Suggested: '+
+   safe(hint)+'</button>');
+ }
+ return chips.join("");
 }
 function subcategoryChips(){
  const cat=categories.find(c=>key(c.name)===key(choice.category));

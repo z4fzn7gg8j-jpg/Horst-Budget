@@ -225,3 +225,15 @@ html[data-theme="dark"] .tx-stream-recurring{color:#e5be98}
  .tx-detected-modern{gap:8px}
  .tx-recurring-amount{font-size:12px}
 }
+
+/* Suggestions outside the user's current category choices remain optional. */
+#view-transactions .tx-options .tx-external-suggestion{
+ border-style:dashed;
+ border-color:var(--chip-color);
+ font-weight:750;
+ padding-left:11px;
+ padding-right:11px;
+}
+#view-transactions .tx-options .tx-external-suggestion .tx-suggest-star{
+ margin-right:3px;
+}
