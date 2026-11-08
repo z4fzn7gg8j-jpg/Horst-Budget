@@ -17,7 +17,8 @@ let client=null,user=null,rows=[],rules=[],categories=[],loaded=false,loading=fa
 let filter={mode:"all",month:today(),year:String(new Date().getFullYear()),start:"",end:""};
 let draftFilter={...filter};
 let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,editingCategoryId=null;
-let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense"},activeCategoryDrill=null;
+let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",personTag:""},activeCategoryDrill=null;
+let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
@@ -45,16 +46,35 @@ function spend(t){
  return Math.abs(Number(t.amount)||0);
 }
 function summary(list){
- const byCat={},bySub={};
+ const byCat={},bySub={},byPerson={};
  let total=0;
  for(const t of list){
    const value=spend(t);if(!value)continue;
    total+=value;
    const cat=t.category||"Needs review",sub=t.subcategory||"Other";
    byCat[cat]=(byCat[cat]||0)+value;
+   if(t.person_tag){const who=t.person_tag.trim();if(who)byPerson[who]=(byPerson[who]||0)+value;}
    const k=cat+"\u0001"+sub;bySub[k]=(bySub[k]||0)+value;
  }
- return {total,byCat,bySub};
+ return {total,byCat,bySub,byPerson};
+}
+function upcomingSubscriptions(){
+ const now=new Date(),todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+ const end=new Date(todayLocal);end.setDate(end.getDate()+7);
+ const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+ const start=iso(todayLocal),finish=iso(end);
+ return recurring.filter(t=>t.active&&!t.hidden&&t.recurring_type==="SUBSCRIPTION"&&
+  t.predicted_next_date>=start&&t.predicted_next_date<=finish)
+  .sort((a,b)=>a.predicted_next_date.localeCompare(b.predicted_next_date)||a.merchant.localeCompare(b.merchant));
+}
+function trackedPeople(){
+ const names=new Map();
+ for(const t of rows){const v=String(t.person_tag||"").trim();if(v&&!names.has(key(v)))names.set(key(v),v);}
+ return [...names.values()].sort((a,b)=>a.localeCompare(b));
+}
+function personChoices(){
+ return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
+ '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
 function getOverview(){
  const current=today();
@@ -62,18 +82,19 @@ function getOverview(){
  const sum=summary(monthRows);
  const ranked=Object.entries(sum.byCat).sort((a,b)=>b[1]-a[1]);
  return {loaded,imported:rows.length,spending:sum.total,topCategories:ranked.slice(0,3),
-  toReview:rows.filter(t=>t.review_status!=="auto").length,monthRows:monthRows.length};
+  toReview:rows.filter(t=>t.review_status!=="auto").length,monthRows:monthRows.length,
+  upcomingSubscriptions:upcomingSubscriptions(),recurringCount:recurring.length};
 }
 function filteredReview(){
  return dateScope().filter(t=>t.review_status!=="auto").sort((a,b)=>b.txn_date.localeCompare(a.txn_date)||b.imported_at.localeCompare(a.imported_at));
 }
 function selectedReview(){
  const all=filteredReview();
- return all.find(t=>!skipped.has(t.id))||null;
+ return all.find(t=>t.id===revisitId&&!skipped.has(t.id))||all.find(t=>!skipped.has(t.id))||null;
 }
 function takeChoice(tx){
  if(choice.id!==tx.id){
-   choice={id:tx.id,category:tx.category||tx.suggested_category||"",subcategory:tx.subcategory||tx.suggested_subcategory||"",kind:tx.kind||"expense"};
+   choice={id:tx.id,category:tx.category||tx.suggested_category||"",subcategory:tx.subcategory||tx.suggested_subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
  }
 }
 function renderFilters(){
@@ -113,12 +134,17 @@ function kindChips(){
  '<button class="tx-kind'+(choice.kind===k?" selected":"")+'" data-choice-kind="'+k+'" type="button">'+
  ({expense:"Purchase",transfer:"Transfer",income:"Income",refund:"Refund"}[k])+'</button>').join("");
 }
+function undoMarkup(){
+ if(!undoStack.length)return "";
+ return '<button class="tx-undo" type="button" id="txUndoAction" aria-label="Undo last transaction action"><span aria-hidden="true">↶</span> Undo / Back</button>';
+}
 function reviewerHtml(){
  const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=pending[0];
  const done=all.length-pending.length;
  const number=rows.filter(t=>t.review_status==="auto"&&dateScope().some(s=>s.id===t.id)).length;
  const progress=all.length+number?Math.round((number/(all.length+number))*100):100;
  if(!tx)return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div></div>'+
+ '<div class="tx-review-undo-row">'+undoMarkup()+'</div>'+
  '<div class="tx-finish"><span class="tx-celebrate">✦</span><h3>All caught up for now.</h3>'+
  '<p>'+(all.length&&skipped.size?"You skipped a few. They are still waiting for you.":"Nothing needs your input for this period.")+'</p>'+
  (all.length&&skipped.size?'<button class="tx-link-button" type="button" id="txReviewSkipped">Review skipped cards</button>':"")+
@@ -126,7 +152,7 @@ function reviewerHtml(){
  takeChoice(tx);
  const stableMerchant=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
  return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div>'+
- '<span class="tx-review-count">'+pending.length+' left</span></div>'+
+ '<div class="tx-review-controls">'+undoMarkup()+'<span class="tx-review-count">'+pending.length+' left</span></div></div>'+
  '<div class="tx-progress" role="progressbar" aria-label="Reviewed transactions" aria-valuenow="'+progress+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+progress+'%"></span></div>'+
  '<div class="tx-card-stack"><article class="tx-swipe-card" id="txSwipeCard" data-tx-id="'+safe(tx.id)+'">'+
  '<div class="tx-card-top"><div class="tx-merchant-avatar">'+safe((tx.merchant||"?").slice(0,1).toUpperCase())+'</div>'+
@@ -139,6 +165,10 @@ function reviewerHtml(){
  '<input class="tx-clean-input" id="txReviewCategory" name="category" aria-label="Your category" maxlength="80" value="'+safe(choice.category)+'" placeholder="Or type your own category"></div>'+
  '<div class="tx-choice-block"><label>Subcategory <span class="tx-optional">optional</span></label><div class="tx-chip-group" id="txSubcategoryChips">'+subcategoryChips()+'</div>'+
  '<input class="tx-clean-input" id="txReviewSubcategory" name="subcategory" maxlength="80" value="'+safe(choice.subcategory)+'" placeholder="Or add your own subcategory"></div>'+
+ '<details class="tx-person-details"'+(choice.personTag?' open':'')+'><summary>Who was it for? <span>'+(choice.personTag?safe(choice.personTag):'Optional')+'</span></summary>'+
+ '<div class="tx-person-panel">'+(trackedPeople().length?'<div class="tx-chip-group">'+personChoices()+'</div>':'')+
+ '<input class="tx-clean-input" id="txReviewPerson" name="person" maxlength="80" autocomplete="off" placeholder="Assign to a person (optional)" value="'+safe(choice.personTag)+'">'+
+ '<p class="tx-muted">This tracks spending by person, separate from the category.</p></div></details>'+
  '<details class="tx-kind-details"><summary>What kind of transaction? <span>'+safe(choice.kind)+'</span></summary><div class="tx-kind-group">'+kindChips()+'</div></details>'+
  (stableMerchant?'<label class="tx-remember"><input type="checkbox" id="txRememberMerchant"> Remember this merchant for future charges</label>':
  '<p class="tx-muted">Generic payment names are never saved as automatic merchant rules.</p>')+
@@ -176,12 +206,17 @@ function renderInsights(){
  '<p class="tx-muted">'+safe(note)+'</p>'+
  '<div class="tx-donut-wrap"><div class="tx-donut" style="background:'+donut+'">'+
  '<div class="tx-donut-center"><strong>'+top.length+'</strong><span>categories</span></div></div></div></div>'+
- '<div class="tx-spend-breakdown">'+catHtml+'</div></div></section>';
+ '<div class="tx-spend-breakdown">'+catHtml+'</div></div>'+
+ '<div class="tx-people-spend"><h3>Spending by person</h3>'+
+ (Object.keys(sum.byPerson).length?Object.entries(sum.byPerson).sort((a,b)=>b[1]-a[1]).map(([person,amount])=>
+  '<div class="tx-person-summary"><span>'+safe(person)+'</span><strong>'+money(amount)+'</strong></div>').join(""):
+  '<p class="tx-muted">Assign purchases to a person as you review them. Their totals will appear here.</p>')+
+ '</div></section>';
 }
 function historyRows(){
  const scoped=dateScope();
  const q=historySearch.trim().toLowerCase();
- const filtered=q?scoped.filter(t=>[t.merchant,t.account_name,t.category,t.subcategory,t.description].some(s=>String(s||"").toLowerCase().includes(q))):scoped;
+ const filtered=q?scoped.filter(t=>[t.merchant,t.account_name,t.category,t.subcategory,t.description,t.person_tag].some(s=>String(s||"").toLowerCase().includes(q))):scoped;
  const sorted=filtered.slice().sort((a,b)=>b.txn_date.localeCompare(a.txn_date));
  if(!sorted.length)return '<p class="tx-muted">No transactions match this filter.</p>';
  return sorted.map(t=>{
@@ -189,11 +224,12 @@ function historyRows(){
  const label=[t.category||"Not categorized",t.subcategory].filter(Boolean).join(" / ");
  return '<div class="tx-history-row"><div class="tx-history-main"><div><strong>'+safe(t.merchant)+'</strong>'+
  '<small>'+safe(dateLabel(t.txn_date))+' · '+safe(t.account_name||"")+'</small>'+
- '<span class="tx-history-category">'+safe(label)+(t.kind==="transfer"?" · Transfer":"")+'</span></div>'+
+ '<span class="tx-history-category">'+safe(label)+(t.kind==="transfer"?" · Transfer":"")+'</span>'+(t.person_tag?'<small>Person: '+safe(t.person_tag)+'</small>':'')+'</div>'+
  '<div class="tx-history-right"><strong>'+money(t.amount)+'</strong><button type="button" data-edit-tx="'+safe(t.id)+'">'+(isEditing?"Close":"Edit")+'</button></div></div>'+
  (isEditing?'<form class="tx-history-form" data-edit-form="'+safe(t.id)+'">'+
  '<label>Category<input class="tx-clean-input" name="category" value="'+safe(t.category||"")+'" required maxlength="80"></label>'+
  '<label>Subcategory<input class="tx-clean-input" name="subcategory" value="'+safe(t.subcategory||"")+'" maxlength="80"></label>'+
+ '<label>Person<input class="tx-clean-input" name="person" maxlength="80" value="'+safe(t.person_tag||"")+'" placeholder="Optional"></label>'+ 
  '<label>Type<select class="select-input" name="kind">'+["expense","transfer","income","refund"].map(k=>'<option value="'+k+'"'+(t.kind===k?" selected":"")+'>'+k+'</option>').join("")+'</select></label>'+
  '<button class="tx-save" type="submit">Save change</button></form>':"")+'</div>';
  }).join("");
@@ -229,12 +265,13 @@ async function loadData(){
  const values=await Promise.all([
   client.from("horst_transactions").select("*").eq("owner_id",user.id).order("txn_date",{ascending:false}).limit(5000),
   client.from("horst_transaction_rules").select("*").eq("owner_id",user.id).limit(1000),
-  client.from("horst_budget_categories").select("*").eq("owner_id",user.id).order("position",{ascending:true})
+  client.from("horst_budget_categories").select("*").eq("owner_id",user.id).order("position",{ascending:true}),
+  client.from("horst_recurring_streams").select("*").eq("owner_id",user.id).limit(500)
  ]);
  loading=false;
  const error=values.find(x=>x.error);
  if(error){notice("Couldn't load private data: "+error.error.message,true);render();return;}
- rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];
+ rows=values[0].data||[];rules=values[1].data||[];categories=values[2].data||[];recurring=values[3].data||[];
  loaded=true;
  noticeText="";noticeBad=false;
  render();
@@ -257,8 +294,9 @@ async function preload(){
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
- if(kind==="category"){choice.category=value;choice.subcategory="";}
- if(kind==="subcategory"){choice.subcategory=value;}
+ if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";}
+ if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;}
+ if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;}
  if(kind==="kind"){choice.kind=value;}
  renderDashboard();
 }
@@ -288,13 +326,15 @@ async function ensureCategory(name,sub){
  }
  categories.push(insert.data);
 }
-async function persist(tx,category,subcategory,kind,remember){
+async function persist(tx,category,subcategory,kind,remember,personTag){
+ personTag=categoryName(personTag===undefined?tx.person_tag:personTag);
+ if(personTag.length>80){notice("Person tags must be 80 characters or less.",true);return false;}
  category=categoryName(category);subcategory=categoryName(subcategory);
  if(!category){notice("Choose a category or type your own first.",true);return false;}
  if(category.length>80||subcategory.length>80){notice("Category names must be 80 characters or less.",true);return false;}
  if(!["expense","transfer","income","refund"].includes(kind))kind="expense";
  const update=await client.from("horst_transactions").update({
-  category,subcategory:subcategory||null,kind,exclude_from_spending:kind==="transfer",
+  category,subcategory:subcategory||null,person_tag:personTag||null,kind,exclude_from_spending:kind==="transfer",
   review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString(),
   updated_at:new Date().toISOString()
  }).eq("id",tx.id).eq("owner_id",user.id).select("id");
@@ -310,8 +350,8 @@ async function persist(tx,category,subcategory,kind,remember){
   if(rule.error)throw rule.error;
  }
  const local=rows.find(t=>t.id===tx.id);
- if(local)Object.assign(local,{category,subcategory:subcategory||null,kind,
-  exclude_from_spending:kind==="transfer",review_status:"auto",classification_origin:"manual"});
+ if(local)Object.assign(local,{category,subcategory:subcategory||null,person_tag:personTag||null,kind,
+  exclude_from_spending:kind==="transfer",review_status:"auto",classification_origin:"manual",reviewed_at:new Date().toISOString()});
  return true;
 }
 async function saveCurrent(){
@@ -435,6 +475,7 @@ root.addEventListener("click",async event=>{
  }
  if(el.dataset.choiceCategory!==undefined){choose("category",decodeURIComponent(el.dataset.choiceCategory));return;}
  if(el.dataset.choiceSub!==undefined){choose("subcategory",decodeURIComponent(el.dataset.choiceSub));return;}
+ if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txSaveCard"){await saveCurrent();return;}
  if(el.id==="txSkipCard"){skipCurrent();return;}
@@ -447,6 +488,7 @@ root.addEventListener("click",async event=>{
 root.addEventListener("input",e=>{
  if(e.target.id==="txReviewCategory"){choice.category=e.target.value;}
  if(e.target.id==="txReviewSubcategory"){choice.subcategory=e.target.value;}
+ if(e.target.id==="txReviewPerson"){choice.personTag=e.target.value;}
  if(e.target.id==="txHistorySearch"){historySearch=e.target.value;renderHistoryRows();}
 });
 root.addEventListener("change",e=>{
@@ -462,7 +504,7 @@ root.addEventListener("submit",async e=>{
  e.preventDefault();const tx=rows.find(t=>t.id===form.dataset.editForm);if(!tx)return;
  const btn=form.querySelector('button[type="submit"]');btn.disabled=true;
  try{
-  await persist(tx,form.elements.category.value,form.elements.subcategory.value,form.elements.kind.value,false);
+  await persist(tx,form.elements.category.value,form.elements.subcategory.value,form.elements.kind.value,false,form.elements.person.value);
   editHistoryId=null;notice("Updated!");render();if(typeof currentView!=="undefined"&&currentView==="home")renderHome();
  }catch(error){notice("Unable to save: "+error.message,true);btn.disabled=false;}
 });
