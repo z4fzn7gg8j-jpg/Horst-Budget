@@ -113,7 +113,7 @@ function selectedReview(){
 }
 function takeChoice(tx){
  if(choice.id!==tx.id){
-   choice={id:tx.id,category:tx.category||tx.suggested_category||"",subcategory:tx.subcategory||tx.suggested_subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
+   choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
  }
 }
 function renderFilters(){
@@ -179,7 +179,9 @@ function reviewerHtml(){
  '<div class="tx-merchant">'+safe(tx.merchant)+'</div>'+
  '<div class="tx-card-amount">'+(Number(tx.amount)<0?"−":Number(tx.amount)>0?"+":"")+money(Math.abs(Number(tx.amount)))+'</div>'+
  '<div class="tx-card-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div>'+
- '<div class="tx-guess"><span>✧</span> '+(tx.category?'<span>Suggested: <strong>'+safe(tx.category)+(tx.subcategory?" / "+safe(tx.subcategory):"")+'</strong></span>':'<span>No confident suggestion yet. Your call!</span>')+'</div>'+
+ '<div class="tx-guess"><span>✧</span> '+(tx.suggested_category?
+ '<span>Possible category: <strong>'+safe(String(tx.suggested_category).replaceAll("_"," "))+'</strong> — your choice</span>':
+ '<span>No confident suggestion yet. Your call!</span>')+'</div>'+
  '<div class="tx-choice-block"><label>Category</label><div class="tx-chip-group" id="txCategoryChips">'+categoryChips()+'</div>'+
  '<input class="tx-clean-input" id="txReviewCategory" name="category" aria-label="Your category" maxlength="80" value="'+safe(choice.category)+'" placeholder="Or type your own category"></div>'+
  '<div class="tx-choice-block"><label>Subcategory <span class="tx-optional">optional</span></label><div class="tx-chip-group" id="txSubcategoryChips">'+subcategoryChips()+'</div>'+
