@@ -126,6 +126,29 @@ function renderRecurringBills(){
  const count=document.getElementById("billMainCount");
  if(count&&manual.length)count.textContent="("+manual.filter(b=>!["annual","semiannual","subscription"].includes(b.type)).length+" planned + "+planned.length+" detected)";
 }
+// Stable, charge-specific key: merchant + payment purpose + account + description.
+// Purchases also require the same amount to prevent blanket restaurant/store rules.
+// Interest/fees/payments do NOT require the same dollar amount.
+function chargePurpose(tx){
+ const full=(String(tx.description||"")+" "+String(tx.merchant||"")).toLowerCase();
+ if(/\binterest\b|finance charge|interest charged/.test(full))return "interest";
+ if(/\bfee\b|late charge|overdraft|service charge/.test(full))return "fee";
+ if(/\bpayment\b|\bautopay\b|\bpayoff\b/.test(full))return "payment";
+ if(/\brefund\b|\breversal\b|\breturn\b/.test(full))return "refund";
+ if(tx.kind==="transfer"||/\btransfer\b|\bwithdrawal\b/.test(full))return "transfer";
+ if(tx.kind==="income")return "income";
+ if(tx.kind==="refund")return "refund";
+ return "purchase";
+}
+function normalizedRuleText(value){
+ return String(value||"").trim().toLowerCase().replace(/\s+/g," ").replace(/[|]/g,"/");
+}
+function ruleContext(tx){
+ const purpose=chargePurpose(tx),account=normalizedRuleText(tx.account_name);
+ const descriptor=normalizedRuleText(tx.description||tx.merchant);
+ const amount=purpose==="purchase"?Math.abs(Number(tx.amount)||0).toFixed(2):"*";
+ return "v2|"+purpose+"|"+account+"|"+descriptor+"|"+amount;
+}
 function getOverview(){
  const current=today();
  const monthRows=rows.filter(t=>t.txn_date&&t.txn_date.startsWith(current));
@@ -278,7 +301,7 @@ function reviewOverlay(){
  '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person')+'</div></div>'+
  '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
  '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
- (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember this merchant</label>':'')+
+ (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember similar charges <small>(type + account'+(chargePurpose(tx)==="purchase"?' + amount':'')+')</small></label>':'')+
  '</div></article><footer class="tx-review-bottom">'+
  '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
  '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
@@ -468,11 +491,11 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
  if(remember&&stable){
   const rule=await client.from("horst_transaction_rules").upsert({
-   owner_id:user.id,merchant_match:tx.merchant.trim().toLowerCase(),category,
+   owner_id:user.id,merchant_match:normalizedRuleText(tx.merchant),match_context:ruleContext(tx),category,
    subcategory:subcategory||null,kind,exclude_from_spending:kind==="transfer",enabled:true
-  },{onConflict:"owner_id,merchant_match"}).select("*").single();
+  },{onConflict:"owner_id,merchant_match,match_context"}).select("*").single();
   if(rule.error)throw rule.error;
-  const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match);
+  const index=rules.findIndex(r=>r.merchant_match===rule.data.merchant_match&&r.match_context===rule.data.match_context);
   if(index>=0)rules[index]=rule.data;else rules.push(rule.data);
  }
  const local=rows.find(t=>t.id===tx.id);
@@ -494,17 +517,17 @@ async function saveCurrent(){
  const sub=root.querySelector("#txReviewSubcategory")?.value??choice.subcategory;
  const person=root.querySelector("#txReviewPerson")?.value??choice.personTag;
  const remember=!!root.querySelector("#txRememberMerchant")?.checked;
- const merchantKey=String(tx.merchant||"").trim().toLowerCase();
+ const merchantKey=normalizedRuleText(tx.merchant),matchContext=ruleContext(tx);
  const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
  const before=snapshotTxn(tx);
- const ruleBefore=remember&&stable?structuredClone(rules.find(r=>r.merchant_match===merchantKey)||null):null;
+ const ruleBefore=remember&&stable?structuredClone(rules.find(r=>r.merchant_match===merchantKey&&r.match_context===matchContext)||null):null;
  const previousChoice={...choice,category:cat,subcategory:sub,personTag:person};
  const btn=root.querySelector("#txSaveCard");if(btn)btn.disabled=true;
  actionBusy=true;
  try{
   const result=await persist(tx,cat,sub,choice.kind,remember,person);
   if(!result){if(btn)btn.disabled=false;return;}
-  undoStack.push({type:"save",txId:tx.id,before,previousChoice,merchantKey,
+  undoStack.push({type:"save",txId:tx.id,before,previousChoice,merchantKey,matchContext,
    remembered:remember&&stable,ruleBefore});
   revisitId=null;choice.id=null;notice("Saved. You can always undo the last card.");
   render();
@@ -537,10 +560,10 @@ async function undoLast(){
     let ruleResult;
     if(last.ruleBefore){
      const {id,created_at,...old}=last.ruleBefore;
-     ruleResult=await client.from("horst_transaction_rules").upsert(old,{onConflict:"owner_id,merchant_match"});
+     ruleResult=await client.from("horst_transaction_rules").upsert(old,{onConflict:"owner_id,merchant_match,match_context"});
     }else{
      ruleResult=await client.from("horst_transaction_rules").delete()
-      .eq("owner_id",user.id).eq("merchant_match",last.merchantKey);
+      .eq("owner_id",user.id).eq("merchant_match",last.merchantKey).eq("match_context",last.matchContext);
     }
     if(ruleResult.error)throw new Error("Transaction restored; merchant rule could not be reversed: "+ruleResult.error.message);
     const allRules=await client.from("horst_transaction_rules").select("*").eq("owner_id",user.id);
