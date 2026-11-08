@@ -20,7 +20,8 @@ let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,edit
 let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",personTag:""},activeCategoryDrill=null;
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
-function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
+let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false,editingRecurringId=null,rememberCurrent=false;
+function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
 function activeRange(){
@@ -63,7 +64,7 @@ function upcomingSubscriptions(){
  const end=new Date(todayLocal);end.setDate(end.getDate()+7);
  const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
  const start=iso(todayLocal),finish=iso(end);
- return recurring.filter(t=>t.active&&!t.hidden&&t.recurring_type==="SUBSCRIPTION"&&
+ return recurring.filter(t=>t.active&&!t.hidden&&classifyStream(t)==="subscription"&&
   t.predicted_next_date>=start&&t.predicted_next_date<=finish)
   .sort((a,b)=>a.predicted_next_date.localeCompare(b.predicted_next_date)||a.merchant.localeCompare(b.merchant));
 }
@@ -76,24 +77,51 @@ function personChoices(){
  return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
  '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
+function classifyStream(r){
+ if(["bill","subscription","recurring"].includes(r.display_type))return r.display_type;
+ return r.recurring_type==="SUBSCRIPTION"?"subscription":
+   (r.recurring_type==="BILL"||r.recurring_type==="MORTGAGE")?"bill":"recurring";
+}
+function normalizeMerchantName(text){
+ return String(text||"").toLowerCase().replace(/\b(payment|payments|bill|monthly|subscription|debit|inc|llc)\b/g,"")
+  .replace(/[^a-z0-9]/g,"").trim();
+}
 function renderRecurringBills(){
- const target=document.getElementById("detectedRecurringList");
+ const subsTarget=document.getElementById("detectedRecurringList");
+ const billsTarget=document.getElementById("detectedBillsList");
  const badge=document.getElementById("billRecurringCount");
- if(!target)return;
- const items=recurring.filter(r=>r.active&&!r.hidden&&
-  ["SUBSCRIPTION","BILL","MORTGAGE"].includes(r.recurring_type))
+ if(!subsTarget||!billsTarget)return;
+ const manual=typeof state!=="undefined"&&state?.bills?state.bills:[];
+ const manualKeys=manual.map(b=>normalizeMerchantName(b.name)).filter(n=>n.length>=5);
+ function isAlreadyPlanned(r){
+  const names=[r.merchant,r.description].map(normalizeMerchantName).filter(Boolean);
+  return names.some(n=>manualKeys.some(m=>m===n||(m.length>=7&&n.length>=7&&(n.includes(m)||m.includes(n)))));
+ }
+ const streams=recurring.filter(r=>r.active&&!r.hidden)
   .sort((a,b)=>(a.predicted_next_date||"9999").localeCompare(b.predicted_next_date||"9999"));
- if(badge)badge.textContent=items.length?"("+items.length+")":"";
- if(!loaded){target.innerHTML='<p class="tx-muted">Loading recurring patterns…</p>';return;}
- if(!items.length){target.innerHTML='<p class="tx-muted">No recognized recurring bills or subscriptions yet.</p>';return;}
- target.innerHTML=items.map(r=>{
-  const value=Number(r.typical_amount||r.last_amount||0);
+ const nonDuplicates=streams.filter(r=>!isAlreadyPlanned(r));
+ const planned=nonDuplicates.filter(r=>classifyStream(r)==="bill");
+ const others=nonDuplicates.filter(r=>classifyStream(r)!=="bill");
+ if(badge)badge.textContent="("+others.length+")";
+ function displayStream(r){
+  const kind=classifyStream(r),tagLabel=kind==="bill"?"Bill":kind==="subscription"?"Subscription":"Recurring";
+  const amount=Number(r.typical_amount||r.last_amount||0);
   const date=r.predicted_next_date?dateLabel(r.predicted_next_date):"Date unknown";
-  return '<div class="tx-detected-item"><div><strong>'+safe(r.description||r.merchant)+'</strong>'+
-   '<small>'+safe(r.recurring_type==="SUBSCRIPTION"?"Subscription":r.recurring_type==="MORTGAGE"?"Mortgage":"Bill")+
-   ' · '+safe(r.frequency||"Recurring")+' · Expected '+safe(date)+'</small></div>'+
-   '<strong>'+(value>0?'≈'+money(value):'Varies')+'</strong></div>';
- }).join("");
+  return '<div class="tx-detected-item tx-detected-modern"><div class="tx-detected-info"><strong>'+safe(r.description||r.merchant)+'</strong>'+
+   '<small>Expected '+safe(date)+' · '+safe(r.frequency||"Recurring")+'</small>'+
+   '<button type="button" class="tx-stream-badge tx-stream-'+kind+'" data-edit-recurring="'+safe(r.id)+'">'+tagLabel+' <span aria-hidden="true">⌄</span></button>'+
+   (editingRecurringId===r.id?'<div class="tx-stream-edit-row">'+
+     [["bill","Bill"],["subscription","Subscription"],["recurring","Other recurring"]].map(([type,label])=>
+       '<button type="button" class="tx-stream-choice'+(kind===type?" active":"")+
+       '" data-set-recurring="'+safe(r.id)+'" data-recurring-type="'+type+'">'+label+'</button>').join("")+
+     '<button type="button" class="tx-stream-choice" data-set-recurring="'+safe(r.id)+'" data-recurring-type="auto">Reset</button></div>':'')+
+   '</div><strong class="tx-recurring-amount">'+(amount>0?'≈'+money(amount):"Varies")+'</strong></div>';
+ }
+ billsTarget.innerHTML=planned.length?'<div class="tx-detected-heading">Detected bills · estimated</div>'+planned.map(displayStream).join(""):"";
+ subsTarget.innerHTML=others.length?'<div class="tx-detected-heading">Detected from connected accounts</div>'+
+  others.map(displayStream).join(""):'<p class="tx-muted">No other detected recurring charges.</p>';
+ const count=document.getElementById("billMainCount");
+ if(count&&manual.length)count.textContent="("+manual.filter(b=>!["annual","semiannual","subscription"].includes(b.type)).length+" planned + "+planned.length+" detected)";
 }
 function getOverview(){
  const current=today();
@@ -114,6 +142,7 @@ function selectedReview(){
 function takeChoice(tx){
  if(choice.id!==tx.id){
    choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
+   rememberCurrent=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;
  }
 }
 function renderFilters(){
@@ -135,15 +164,19 @@ function renderFilters(){
  '<p class="tx-muted">Your selection updates the review cards, spending charts, and transaction history together.</p>';
 }
 function categoryChips(){
- const ordered=availableCategories();
- return ordered.map(c=>
- '<button class="tx-choice '+(key(choice.category)===key(c.name)?"selected":"")+
- '" type="button" data-choice-category="'+enc(c.name)+'" style="--chip-color:'+c.color+'">'+safe(c.name)+'</button>').join("");
+ const tx=selectedReview(),hint=String(tx?.suggested_category||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+ return availableCategories().map(c=>{
+  const matched=!!hint&&hint===key(c.name).replace(/[^a-z0-9]/g,""),selected=key(choice.category)===key(c.name);
+  return '<button class="tx-choice'+(selected?' selected':'')+(matched&&!selected?' suggested':'')+
+    '" data-choice-category="'+enc(c.name)+'" type="button"'+(matched?' title="Suggested category"':'')+
+    ' style="--chip-color:'+safe(isValidColor(c.color)?c.color:colorFor(c.name))+'">'+safe(c.name)+
+    (matched&&!selected?'<span class="tx-suggest-star" aria-hidden="true"> ✦</span>':'')+'</button>';
+ }).join("");
 }
 function subcategoryChips(){
  const cat=categories.find(c=>key(c.name)===key(choice.category));
  const subs=cat?cat.subcategories||[]:[];
- if(!subs.length)return '<p class="tx-muted">Optional. Make your own subcategory below.</p>';
+ if(!subs.length)return '';
  return subs.map(name=>
  '<button type="button" class="tx-choice tx-subchoice '+(key(choice.subcategory)===key(name)?"selected":"")+
  '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("");
@@ -154,48 +187,52 @@ function kindChips(){
  ({expense:"Purchase",transfer:"Transfer",income:"Income",refund:"Refund"}[k])+'</button>').join("");
 }
 function undoMarkup(){
- if(!undoStack.length)return "";
- return '<button class="tx-undo" type="button" id="txUndoAction" aria-label="Undo last transaction action"><span aria-hidden="true">↶</span> Undo / Back</button>';
+ return undoStack.length?'<button id="txUndoAction" class="tx-undo" type="button" aria-label="Undo last transaction">↶ Undo</button>':'';
+}
+function addOption(type,open,placeholder){
+ const value=type==='Category'?choice.category:type==='Subcategory'?choice.subcategory:choice.personTag;
+ return open?'<div class="tx-custom-entry"><input class="tx-clean-input" id="txReview'+type+'" maxlength="80" autocomplete="off" placeholder="'+placeholder+'" value="'+safe(value)+'">'+
+ '<button class="tx-input-close" type="button" data-close-custom="'+type+'" aria-label="Close">×</button></div>':
+ '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+}
+function reviewOverlay(){
+ if(!reviewOpen)return '';
+ const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=selectedReview(),n=all.length;
+ if(!tx)return '<div class="tx-review-overlay" id="txReviewOverlay" role="dialog" aria-modal="true" aria-label="Review complete">'+
+ '<div class="tx-modal-top"><button id="txCloseReview" type="button" class="tx-modal-close">✕ Close</button>'+undoMarkup()+'</div>'+
+ '<div class="tx-review-completed"><div class="tx-celebration">✦</div><h2>All caught up!</h2><p>No more cards in this date range.</p>'+
+ (skipped.size?'<button id="txReviewSkipped" class="tx-skip" type="button">Revisit skipped</button>':'')+
+ '<button id="txReviewDone" class="tx-save" type="button">View insights →</button></div></div>';
+ takeChoice(tx);
+ const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
+ const selectedLabel={expense:"Purchase",transfer:"Transfer",income:"Income",refund:"Refund"}[choice.kind]||"Purchase";
+ const done=n-pending.length;
+ return '<div class="tx-review-overlay" id="txReviewOverlay" role="dialog" aria-modal="true" aria-label="Review transactions">'+
+ '<div class="tx-review-frame"><header class="tx-modal-top"><button id="txCloseReview" type="button" class="tx-modal-close" aria-label="Close review">✕</button>'+
+ '<span class="tx-modal-title">Review transactions</span><span class="tx-modal-count">'+(done+1)+' / '+n+'</span>'+undoMarkup()+'</header>'+
+ '<div class="tx-overlay-progress"><span style="width:'+(n?100*done/n:100)+'%"></span></div>'+
+ '<article class="tx-review-card" id="txSwipeCard" data-tx-id="'+safe(tx.id)+'">'+
+ '<div class="tx-review-hero" id="txSwipeZone"><h2>'+safe(tx.merchant)+'</h2>'+
+ '<div class="tx-review-amount">'+(Number(tx.amount)<0?'−':Number(tx.amount)>0?'+':'')+money(Math.abs(Number(tx.amount)))+'</div>'+
+ '<div class="tx-review-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div></div>'+
+ '<div class="tx-review-fields">'+
+ '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category',customCategoryOpen,'New category')+'</div></div>'+
+ '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory',customSubOpen,'New subcategory')+'</div></div>'+
+ '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person',customPersonOpen,'Who was it for?')+'</div></div>'+
+ '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
+ '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
+ (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember this merchant</label>':'')+
+ '</div></article><footer class="tx-review-bottom">'+
+ '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
+ '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
+ '<button id="txSaveCard" class="tx-save" type="button">Save & next <span>→</span></button></div>'+
+ '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div></div>';
 }
 function reviewerHtml(){
- const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=selectedReview();
- const done=all.length-pending.length;
- const number=rows.filter(t=>t.review_status==="auto"&&dateScope().some(s=>s.id===t.id)).length;
- const progress=all.length+number?Math.round((number/(all.length+number))*100):100;
- if(!tx)return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div></div>'+
- '<div class="tx-review-undo-row">'+undoMarkup()+'</div>'+
- '<div class="tx-finish"><span class="tx-celebrate">✦</span><h3>All caught up for now.</h3>'+
- '<p>'+(all.length&&skipped.size?"You skipped a few. They are still waiting for you.":"Nothing needs your input for this period.")+'</p>'+
- (all.length&&skipped.size?'<button class="tx-link-button" type="button" id="txReviewSkipped">Review skipped cards</button>':"")+
- '</div></section>';
- takeChoice(tx);
- const stableMerchant=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
- return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div>'+
- '<div class="tx-review-controls">'+undoMarkup()+'<span class="tx-review-count">'+pending.length+' left</span></div></div>'+
- '<div class="tx-progress" role="progressbar" aria-label="Reviewed transactions" aria-valuenow="'+progress+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+progress+'%"></span></div>'+
- '<div class="tx-card-stack"><article class="tx-swipe-card" id="txSwipeCard" data-tx-id="'+safe(tx.id)+'">'+
- '<div class="tx-card-top"><div class="tx-merchant-avatar">'+safe((tx.merchant||"?").slice(0,1).toUpperCase())+'</div>'+
- '<span class="tx-card-counter">'+(all.length-pending.length+1)+' / '+all.length+'</span></div>'+
- '<div class="tx-merchant">'+safe(tx.merchant)+'</div>'+
- '<div class="tx-card-amount">'+(Number(tx.amount)<0?"−":Number(tx.amount)>0?"+":"")+money(Math.abs(Number(tx.amount)))+'</div>'+
- '<div class="tx-card-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div>'+
- '<div class="tx-guess"><span>✧</span> '+(tx.suggested_category?
- '<span>Possible category: <strong>'+safe(String(tx.suggested_category).replaceAll("_"," "))+'</strong> — your choice</span>':
- '<span>No confident suggestion yet. Your call!</span>')+'</div>'+
- '<div class="tx-choice-block"><label>Category</label><div class="tx-chip-group" id="txCategoryChips">'+categoryChips()+'</div>'+
- '<input class="tx-clean-input" id="txReviewCategory" name="category" aria-label="Your category" maxlength="80" value="'+safe(choice.category)+'" placeholder="Or type your own category"></div>'+
- '<div class="tx-choice-block"><label>Subcategory <span class="tx-optional">optional</span></label><div class="tx-chip-group" id="txSubcategoryChips">'+subcategoryChips()+'</div>'+
- '<input class="tx-clean-input" id="txReviewSubcategory" name="subcategory" maxlength="80" value="'+safe(choice.subcategory)+'" placeholder="Or add your own subcategory"></div>'+
- '<details class="tx-person-details"'+(choice.personTag?' open':'')+'><summary>Who was it for? <span>'+(choice.personTag?safe(choice.personTag):'Optional')+'</span></summary>'+
- '<div class="tx-person-panel">'+(trackedPeople().length?'<div class="tx-chip-group">'+personChoices()+'</div>':'')+
- '<input class="tx-clean-input" id="txReviewPerson" name="person" maxlength="80" autocomplete="off" placeholder="Assign to a person (optional)" value="'+safe(choice.personTag)+'">'+
- '<p class="tx-muted">This tracks spending by person, separate from the category.</p></div></details>'+
- '<details class="tx-kind-details"><summary>What kind of transaction? <span>'+safe(choice.kind)+'</span></summary><div class="tx-kind-group">'+kindChips()+'</div></details>'+
- (stableMerchant?'<label class="tx-remember"><input type="checkbox" id="txRememberMerchant"> Remember this merchant for future charges</label>':
- '<p class="tx-muted">Generic payment names are never saved as automatic merchant rules.</p>')+
- '<div class="tx-swipe-actions"><button type="button" class="tx-skip" id="txSkipCard">Skip</button>'+
- '<button type="button" class="tx-save" id="txSaveCard">Save &amp; next <span>→</span></button></div>'+
- '<div class="tx-swipe-hint">Swipe right to save · swipe left to skip</div></article></div></section>';
+ const count=filteredReview().length;
+ return '<section class="tx-review-invite"><div class="tx-invite-copy"><span>✦ QUICK CHECK-IN</span><h2>Review transactions</h2>'+
+ '<p>'+(count?count+' transactions waiting for your choices.':'You’re all caught up!')+'</p></div>'+
+ '<button id="txStartReview" type="button"'+(!count?' disabled':'')+' class="tx-invite-button">'+(count?'Start review':'All done')+' →</button></section>'+reviewOverlay();
 }
 function renderInsights(){
  const data=dateScope(),sum=summary(data),ranked=Object.entries(sum.byCat).sort((a,b)=>b[1]-a[1]);
@@ -275,6 +312,7 @@ function renderDashboard(){
  '<div id="txHistoryRows">'+historyRows()+'</div></div></details>')+
  '</div>';
  renderFilters();
+ document.body.classList.toggle("tx-review-open",reviewOpen);
 }
 function render(){
  if(!user){root.innerHTML='<div class="tx-loading">Sign in to view your transactions.</div>';return;}
@@ -313,14 +351,21 @@ async function preload(){
  })().catch(e=>{openPromise=null;notice("Could not initialize Transactions: "+e.message,true);render();});
  return openPromise;
 }
+function refreshReviewOverlay(){
+ const old=root.querySelector("#txReviewOverlay");
+ if(!reviewOpen||!old){renderDashboard();return;}
+ const wrap=document.createElement("div");
+ wrap.innerHTML=reviewOverlay();
+ if(wrap.firstElementChild)old.replaceWith(wrap.firstElementChild);
+}
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
- if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";}
- if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;}
- if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;}
+ if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;}
+ if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;customSubOpen=false;}
+ if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;customPersonOpen=false;}
  if(kind==="kind"){choice.kind=value;}
- renderDashboard();
+ refreshReviewOverlay();
 }
 async function ensureCategory(name,sub){
  name=categoryName(name);sub=categoryName(sub);
@@ -559,8 +604,21 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txUndoAction"){await undoLast();return;}
- if(el.id==="txSaveCard"){await saveCurrent();return;}
- if(el.id==="txSkipCard"){skipCurrent();return;}
+ if(el.id==="txStartReview"){reviewOpen=true;notice("");render();return;}
+ if(el.id==="txCloseReview"||el.id==="txReviewDone"){reviewOpen=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;notice("");render();return;}
+ if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
+  const type=el.id.slice(5);if(type==="Category")customCategoryOpen=true;
+  if(type==="Subcategory")customSubOpen=true;if(type==="Person")customPersonOpen=true;
+  refreshReviewOverlay();const input=root.querySelector("#txReview"+type);input?.focus();return;
+ }
+ if(el.dataset.closeCustom){
+  const type=el.dataset.closeCustom;if(type==="Category")customCategoryOpen=false;
+  if(type==="Subcategory")customSubOpen=false;if(type==="Person")customPersonOpen=false;
+  refreshReviewOverlay();return;
+ }
+ if(el.id==="txTypeToggle"){const list=root.querySelector("#txTypeChoices");if(list)list.hidden=!list.hidden;return;}
+ if(el.id==="txSaveCard"){animateReviewSwipe("right");return;}
+ if(el.id==="txSkipCard"){animateReviewSwipe("left");return;}
  if(el.id==="txReviewSkipped"){skipped=new Set();render();return;}
  if(el.dataset.catDrill){const name=decodeURIComponent(el.dataset.catDrill);activeCategoryDrill=activeCategoryDrill===name?null:name;render();return;}
  if(el.closest("#txHistoryDrawer>summary")){historyOpen=!root.querySelector("#txHistoryDrawer").open;return;}
@@ -575,6 +633,7 @@ root.addEventListener("input",e=>{
 });
 root.addEventListener("change",e=>{
  const el=e.target;
+ if(el.id==="txRememberMerchant"){rememberCurrent=el.checked;return;}
  if(el.id==="txFilterMonth")draftFilter.month=el.value;
  if(el.id==="txFilterYear")draftFilter.year=el.value;
  if(el.id==="txFilterStart")draftFilter.start=el.value;
@@ -589,6 +648,22 @@ root.addEventListener("submit",async e=>{
   await persist(tx,form.elements.category.value,form.elements.subcategory.value,form.elements.kind.value,false,form.elements.person.value);
   editHistoryId=null;notice("Updated!");render();if(typeof currentView!=="undefined"&&currentView==="home")renderHome();
  }catch(error){notice("Unable to save: "+error.message,true);btn.disabled=false;}
+});
+document.addEventListener("click",async e=>{
+ const btn=e.target.closest("[data-edit-recurring],[data-set-recurring]");
+ if(!btn)return;
+ if(btn.dataset.editRecurring){
+  editingRecurringId=editingRecurringId===btn.dataset.editRecurring?null:btn.dataset.editRecurring;
+  renderRecurringBills();return;
+ }
+ const row=recurring.find(r=>r.id===btn.dataset.setRecurring);if(!row||!client||!user)return;
+ const type=btn.dataset.recurringType==="auto"?null:btn.dataset.recurringType;
+ if(type&&!["bill","subscription","recurring"].includes(type))return;
+ btn.disabled=true;
+ const res=await client.from("horst_recurring_streams").update({display_type:type}).eq("owner_id",user.id).eq("id",row.id).select("id");
+ if(res.error||!res.data?.length){btn.disabled=false;alert("Could not save recurring type: "+(res.error?.message||"no row updated"));return;}
+ row.display_type=type;editingRecurringId=null;renderRecurringBills();
+ if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
 });
 document.addEventListener("click",async e=>{
  const el=e.target.closest("button");if(!el)return;
@@ -612,29 +687,61 @@ document.addEventListener("submit",async e=>{
  try{if(form.id==="txNewCategory")await submitCategoryCreation(form);else await saveCategory(form);}
  catch(error){notice("Could not change category: "+error.message,true);if(btn)btn.disabled=false;}
 });
+function restoreSwipeCard(){
+ const card=root.querySelector("#txSwipeCard");if(!card)return;
+ card.style.transition="transform .22s cubic-bezier(.2,.75,.25,1),opacity .22s";
+ card.style.transform="";card.style.opacity="";
+}
+function animateReviewSwipe(direction){
+ if(!reviewOpen||swipeAnimating||actionBusy)return;
+ if(direction==="right"){
+  const cat=(root.querySelector("#txReviewCategory")?.value??choice.category).trim();
+  if(!cat){notice("Choose a category first, or swipe left to skip.",true);return;}
+ }
+ const card=root.querySelector("#txSwipeCard");
+ if(!card)return;
+ const reduce=window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+ swipeAnimating=true;
+ card.style.transition=reduce?"none":"transform .18s cubic-bezier(.4,0,1,1),opacity .18s";
+ card.style.transform="translate3d("+(direction==="right"?"110%":"-110%")+",0,0) rotate("+(direction==="right"?"3":"-3")+"deg)";
+ card.style.opacity="0";
+ window.setTimeout(async()=>{
+  swipeAnimating=false;
+  if(direction==="right")await saveCurrent();else skipCurrent();
+  if(card.isConnected)restoreSwipeCard();
+ },reduce?0:185);
+}
 root.addEventListener("pointerdown",e=>{
- const card=e.target.closest("#txSwipeCard");if(!card||e.target.closest("button,input,select,label,summary"))return;
- drag={id:e.pointerId,x:e.clientX,start:e.clientX,card};
+ const card=e.target.closest("#txSwipeCard");
+ if(!reviewOpen||!card||e.target.closest("button,input,select,label,summary"))return;
+ drag={id:e.pointerId,start:e.clientX,time:performance.now(),card};
 });
 root.addEventListener("pointermove",e=>{
- if(!drag||drag.id!==e.pointerId)return;
- const dx=e.clientX-drag.start;drag.x=e.clientX;
- if(Math.abs(dx)>8)drag.card.style.transform="translateX("+Math.max(-120,Math.min(120,dx))+"px) rotate("+dx/50+"deg)";
+ if(!drag||drag.id!==e.pointerId||!drag.card.isConnected)return;
+ const dx=e.clientX-drag.start;
+ if(Math.abs(dx)<8)return;
+ const bounded=Math.max(-65,Math.min(65,dx*.45));
+ drag.card.style.transition="none";
+ drag.card.style.transform="translate3d("+bounded+"px,0,0)";
+ drag.card.style.opacity=String(1-Math.min(.18,Math.abs(dx)/700));
 });
 root.addEventListener("pointerup",e=>{
  if(!drag||drag.id!==e.pointerId)return;
- const dx=e.clientX-drag.start;
- if(drag.card?.isConnected)drag.card.style.transform="";
+ const dx=e.clientX-drag.start,dt=Math.max(1,performance.now()-drag.time);
  drag=null;
- if(dx>95)saveCurrent();
- else if(dx< -95)skipCurrent();
+ if(Math.abs(dx)>82||(Math.abs(dx)>42&&Math.abs(dx)/dt>.6)){
+  animateReviewSwipe(dx>0?"right":"left");
+ }else restoreSwipeCard();
 });
+root.addEventListener("pointercancel",()=>{drag=null;restoreSwipeCard();});
 document.addEventListener("keydown",e=>{
  if(typeof currentView==="undefined"||currentView!=="transactions"||!user)return;
  if(e.target.closest("input,textarea,select,[contenteditable]"))return;
- if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)){e.preventDefault();undoLast();return;}
- if(e.key==="ArrowRight"){e.preventDefault();saveCurrent();}
- if(e.key==="ArrowLeft"){e.preventDefault();skipCurrent();}
+ if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&reviewOpen){e.preventDefault();undoLast();return;}
+ if(e.key==="Escape"&&reviewOpen){reviewOpen=false;render();return;}
+ if(!reviewOpen)return;
+ if(e.key==="ArrowRight"){e.preventDefault();animateReviewSwipe("right");}
+ if(e.key==="ArrowLeft"){e.preventDefault();animateReviewSwipe("left");}
 });
 window.horstTransactions={
  preload,open:async()=>{await preload();render();},
