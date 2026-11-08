@@ -21,7 +21,7 @@ let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
 let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false;
-function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
+function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
 function activeRange(){
@@ -569,8 +569,21 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txUndoAction"){await undoLast();return;}
- if(el.id==="txSaveCard"){await saveCurrent();return;}
- if(el.id==="txSkipCard"){skipCurrent();return;}
+ if(el.id==="txStartReview"){reviewOpen=true;notice("");render();return;}
+ if(el.id==="txCloseReview"||el.id==="txReviewDone"){reviewOpen=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;notice("");render();return;}
+ if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
+  const type=el.id.slice(5);if(type==="Category")customCategoryOpen=true;
+  if(type==="Subcategory")customSubOpen=true;if(type==="Person")customPersonOpen=true;
+  render();const input=root.querySelector("#txReview"+type);input?.focus();return;
+ }
+ if(el.dataset.closeCustom){
+  const type=el.dataset.closeCustom;if(type==="Category")customCategoryOpen=false;
+  if(type==="Subcategory")customSubOpen=false;if(type==="Person")customPersonOpen=false;
+  render();return;
+ }
+ if(el.id==="txTypeToggle"){const list=root.querySelector("#txTypeChoices");if(list)list.hidden=!list.hidden;return;}
+ if(el.id==="txSaveCard"){animateReviewSwipe("right");return;}
+ if(el.id==="txSkipCard"){animateReviewSwipe("left");return;}
  if(el.id==="txReviewSkipped"){skipped=new Set();render();return;}
  if(el.dataset.catDrill){const name=decodeURIComponent(el.dataset.catDrill);activeCategoryDrill=activeCategoryDrill===name?null:name;render();return;}
  if(el.closest("#txHistoryDrawer>summary")){historyOpen=!root.querySelector("#txHistoryDrawer").open;return;}
@@ -622,29 +635,61 @@ document.addEventListener("submit",async e=>{
  try{if(form.id==="txNewCategory")await submitCategoryCreation(form);else await saveCategory(form);}
  catch(error){notice("Could not change category: "+error.message,true);if(btn)btn.disabled=false;}
 });
+function restoreSwipeCard(){
+ const card=root.querySelector("#txSwipeCard");if(!card)return;
+ card.style.transition="transform .22s cubic-bezier(.2,.75,.25,1),opacity .22s";
+ card.style.transform="";card.style.opacity="";
+}
+function animateReviewSwipe(direction){
+ if(!reviewOpen||swipeAnimating||actionBusy)return;
+ if(direction==="right"){
+  const cat=(root.querySelector("#txReviewCategory")?.value??choice.category).trim();
+  if(!cat){notice("Choose a category first, or swipe left to skip.",true);return;}
+ }
+ const card=root.querySelector("#txSwipeCard");
+ if(!card)return;
+ const reduce=window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+ swipeAnimating=true;
+ card.style.transition=reduce?"none":"transform .18s cubic-bezier(.4,0,1,1),opacity .18s";
+ card.style.transform="translate3d("+(direction==="right"?"110%":"-110%")+",0,0) rotate("+(direction==="right"?"3":"-3")+"deg)";
+ card.style.opacity="0";
+ window.setTimeout(async()=>{
+  swipeAnimating=false;
+  if(direction==="right")await saveCurrent();else skipCurrent();
+  if(card.isConnected)restoreSwipeCard();
+ },reduce?0:185);
+}
 root.addEventListener("pointerdown",e=>{
- const card=e.target.closest("#txSwipeCard");if(!card||e.target.closest("button,input,select,label,summary"))return;
- drag={id:e.pointerId,x:e.clientX,start:e.clientX,card};
+ const card=e.target.closest("#txSwipeCard");
+ if(!reviewOpen||!card||e.target.closest("button,input,select,label,summary"))return;
+ drag={id:e.pointerId,start:e.clientX,time:performance.now(),card};
 });
 root.addEventListener("pointermove",e=>{
- if(!drag||drag.id!==e.pointerId)return;
- const dx=e.clientX-drag.start;drag.x=e.clientX;
- if(Math.abs(dx)>8)drag.card.style.transform="translateX("+Math.max(-120,Math.min(120,dx))+"px) rotate("+dx/50+"deg)";
+ if(!drag||drag.id!==e.pointerId||!drag.card.isConnected)return;
+ const dx=e.clientX-drag.start;
+ if(Math.abs(dx)<8)return;
+ const bounded=Math.max(-65,Math.min(65,dx*.45));
+ drag.card.style.transition="none";
+ drag.card.style.transform="translate3d("+bounded+"px,0,0)";
+ drag.card.style.opacity=String(1-Math.min(.18,Math.abs(dx)/700));
 });
 root.addEventListener("pointerup",e=>{
  if(!drag||drag.id!==e.pointerId)return;
- const dx=e.clientX-drag.start;
- if(drag.card?.isConnected)drag.card.style.transform="";
+ const dx=e.clientX-drag.start,dt=Math.max(1,performance.now()-drag.time);
  drag=null;
- if(dx>95)saveCurrent();
- else if(dx< -95)skipCurrent();
+ if(Math.abs(dx)>82||(Math.abs(dx)>42&&Math.abs(dx)/dt>.6)){
+  animateReviewSwipe(dx>0?"right":"left");
+ }else restoreSwipeCard();
 });
+root.addEventListener("pointercancel",()=>{drag=null;restoreSwipeCard();});
 document.addEventListener("keydown",e=>{
  if(typeof currentView==="undefined"||currentView!=="transactions"||!user)return;
  if(e.target.closest("input,textarea,select,[contenteditable]"))return;
- if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)){e.preventDefault();undoLast();return;}
- if(e.key==="ArrowRight"){e.preventDefault();saveCurrent();}
- if(e.key==="ArrowLeft"){e.preventDefault();skipCurrent();}
+ if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&reviewOpen){e.preventDefault();undoLast();return;}
+ if(e.key==="Escape"&&reviewOpen){reviewOpen=false;render();return;}
+ if(!reviewOpen)return;
+ if(e.key==="ArrowRight"){e.preventDefault();animateReviewSwipe("right");}
+ if(e.key==="ArrowLeft"){e.preventDefault();animateReviewSwipe("left");}
 });
 window.horstTransactions={
  preload,open:async()=>{await preload();render();},
