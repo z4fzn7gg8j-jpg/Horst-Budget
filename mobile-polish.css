@@ -321,3 +321,64 @@ body.tx-review-open{
  #view-transactions .tx-review-help{display:none}
  #view-transactions .tx-review-buttons button{min-height:40px}
 }
+
+
+/* Payments are a report, not another input the user has to fill in. */
+#view-transactions .tx-payment-cards{
+ display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+ gap:10px;margin:14px 0 8px;min-width:0;
+}
+#view-transactions .tx-payment-card{
+ border:1px solid var(--line);border-radius:18px;padding:16px;
+ background:var(--surface);min-width:0;
+ box-shadow:var(--shadow);
+}
+#view-transactions .tx-payment-card.daily{box-shadow:inset 0 3px 0 #7897d8,var(--shadow)}
+#view-transactions .tx-payment-card.bill{box-shadow:inset 0 3px 0 #bd98ce,var(--shadow)}
+#view-transactions .tx-payment-card.debt{box-shadow:inset 0 3px 0 #dca77b,var(--shadow)}
+#view-transactions .tx-payment-card small{
+ display:block;color:var(--muted);font-size:12px;line-height:1.3;margin-bottom:8px;
+}
+#view-transactions .tx-payment-card strong{
+ font:800 clamp(19px,3.4vw,26px)/1.2 var(--font-body);
+ letter-spacing:-.7px;color:var(--ink);word-break:break-word;
+}
+#view-transactions .tx-payment-caption{
+ color:var(--muted);font-size:11px;line-height:1.5;margin:0 0 14px;
+}
+#txAccountsSettings .tx-accounts-overview{
+ display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 10px;
+}
+#txAccountsSettings .tx-account-count{
+ font-size:12px;font-weight:800;padding:6px 10px;border-radius:99px;
+ border:1px solid var(--line);
+}
+#txAccountsSettings .tx-account-count.credit_card{background:#e9e9f9;color:#525ca4}
+#txAccountsSettings .tx-account-count.checking{background:#e6f2f2;color:#3d7778}
+#txAccountsSettings .tx-account-count.savings{background:#edf2e4;color:#657f48}
+#txAccountsSettings .tx-account-count.loan{background:#f8ede5;color:#9b6748}
+#txAccountsSettings .tx-accounts-list{margin:10px 0 15px}
+#txAccountsSettings .tx-account-row{
+ display:flex;justify-content:space-between;gap:10px;align-items:center;
+ padding:12px 0;border-bottom:1px solid var(--line);
+}
+#txAccountsSettings .tx-account-row:last-child{border-bottom:0}
+#txAccountsSettings .tx-account-label{min-width:0;flex:1}
+#txAccountsSettings .tx-account-label strong{display:block;font-size:14px;overflow-wrap:anywhere}
+#txAccountsSettings .tx-account-label small{display:block;font-size:11px;color:var(--muted);margin-top:5px}
+#txAccountsSettings .tx-account-row select{
+ width:min(160px,42%);flex-shrink:0;min-height:40px;
+ margin:0;padding:8px 32px 8px 10px;font-size:13px;
+ border-radius:12px;background-color:var(--surface-sunk);
+}
+#txAccountsSettings #txAccountsNotice{font-size:12px;color:var(--muted)}
+html[data-theme="dark"] #txAccountsSettings .tx-account-count.credit_card{background:#35364e;color:#c9cef8}
+html[data-theme="dark"] #txAccountsSettings .tx-account-count.checking{background:#294c4c;color:#b9e0e1}
+html[data-theme="dark"] #txAccountsSettings .tx-account-count.savings{background:#364332;color:#c0d7a0}
+html[data-theme="dark"] #txAccountsSettings .tx-account-count.loan{background:#4a3a31;color:#e5c29c}
+@media(max-width:650px){
+ #view-transactions .tx-payment-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ #view-transactions .tx-payment-card{padding:12px}
+ #view-transactions .tx-payment-card.debt{grid-column:1/-1}
+ #txAccountsSettings .tx-account-row select{width:142px}
+}
