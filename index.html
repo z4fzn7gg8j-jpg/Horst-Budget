@@ -1307,7 +1307,6 @@ function renderHome(){
   const overview=window.horstTransactions?.getOverview?.()||null;
   const loaded=!!overview?.loaded;
   const spendingLabel=loaded?fmtMoney(overview.spending):"—";
-  const reviewCount=loaded?overview.toReview:null;
   const topCats=loaded?(overview.topCategories||[]):[];
   const subscriptions=loaded?(overview.upcomingSubscriptions||[]):[];
   const subRows=subscriptions.map(s=>{
@@ -1325,7 +1324,6 @@ function renderHome(){
     return '<div class="home-mini-row"><div style="min-width:0;flex:1;"><span class="home-mini-dot" style="background:'+chartColors[i%chartColors.length]+'"></span><strong>'+safeText(entry[0])+'</strong><div style="height:6px;background:var(--surface-sunk);border-radius:8px;margin-top:8px;overflow:hidden;"><div style="height:100%;width:'+width+'%;background:'+chartColors[i%chartColors.length]+';border-radius:8px;"></div></div></div><strong style="white-space:nowrap;">'+fmtMoney(entry[1])+'</strong></div>';
   }).join(""):'<p class="muted-note">Your spending categories will appear as transactions are imported.</p>';
   const planPayDate=fmtDate(displayPayDate(index));
-  const nextPayDate=fmtDate(displayPayDate(index+1));
   document.getElementById("homeContent").innerHTML=
     '<div class="home-welcome"><div><p class="home-kicker">YOUR MONEY AT A GLANCE</p><h1>Your financial picture.</h1><p>One simple view of your paycheck plan and recorded spending.</p></div></div>'+
     '<div class="home-top-grid">'+
@@ -1339,24 +1337,10 @@ function renderHome(){
     (loaded?(subscriptions.length?subRows:'<p class="muted-note">No detected subscriptions expected in the next seven days.</p>'):
       '<p class="muted-note">Checking your connected recurring payments…</p>')+
     '<p class="home-sub-foot">These are forecasts from payment history, not guaranteed charge dates or unpaid balances.</p></div>'+
-    '<div class="home-panel-grid">'+
-      '<div class="home-action colorful"><p class="home-kicker">KEEP IT EASY</p><h2>Review transactions ✨</h2><p>'+(reviewCount===null?"Checking your transaction inbox…":reviewCount?reviewCount+" transactions need your input. One quick card at a time.":"You're all caught up. New transactions will appear here.")+'</p><button type="button" class="btn btn-primary" id="homeReviewTransactions">Open transaction review →</button></div>'+
-      '<div class="home-action"><p class="home-kicker">PAYCHECK PLANNER</p><h2>Keep your paycheck on track.</h2><p>Next paycheck: '+safeText(nextPayDate)+'. Review the amounts and upcoming bills assigned to it.</p><button type="button" class="btn" id="homeOpenPlan">Open paycheck plan →</button></div>'+
-    '</div>'+
-    '<div class="home-panel-grid">'+
-      '<div class="card"><h2>Spending at a glance</h2><p class="card-sub">Top categories this month · based on imported records</p>'+cats+'<button type="button" class="btn btn-sm btn-ghost" id="homeOpenSpending" style="margin-top:12px;">See spending insights →</button></div>'+
-      '<div class="card"><h2>Bills & subscriptions</h2><p class="card-sub">Your recurring commitments, all in one place.</p><div class="home-mini-row"><span>Tracked bills</span><strong>'+state.bills.length+'</strong></div><div class="home-mini-row"><span>Current paycheck items to review</span><strong>'+review.length+'</strong></div><button type="button" class="btn btn-sm btn-ghost" id="homeViewBills" style="margin-top:12px;">Manage bills →</button></div>'+
-    '</div>'+
-    (lastSyncError?'<div class="card"><h2>Cloud sync needs attention</h2><p class="muted-note">'+safeText(lastSyncError)+'</p><button class="btn btn-sm" id="homeSync">Retry cloud save</button></div>':"")+
-    '<details class="soft-collapse"><summary>Upcoming payments · '+pending.length+'</summary><div class="collapse-body">'+
-       (pending.length?renderBillCards(pending,index):'<p class="muted-note">No open payments assigned to this paycheck.</p>')+
-       '</div></details>';
-  document.getElementById("homeOpenPlan").onclick=()=>{currentPeriodIndex=todayIndex();setView("plan");};
-  document.getElementById("homeReviewTransactions").onclick=()=>setView("transactions");
+    '<div class="card"><h2>Spending at a glance</h2><p class="card-sub">Top categories this month · based on imported records</p>'+cats+'<button type="button" class="btn btn-sm btn-ghost" id="homeOpenSpending" style="margin-top:12px;">See spending insights →</button></div>'+ 
+    (lastSyncError?'<div class="card"><h2>Cloud sync needs attention</h2><p class="muted-note">'+safeText(lastSyncError)+'</p><button class="btn btn-sm" id="homeSync">Retry cloud save</button></div>':"");
   document.getElementById("homeOpenSpending").onclick=()=>setView("transactions");
-  document.getElementById("homeViewBills").onclick=()=>setView("bills");
   const retry=document.getElementById("homeSync");if(retry)retry.onclick=saveToSupabase;
-  wirePaymentActions(index);
 }
 function wirePaymentActions(index){
   document.querySelectorAll("[data-review-payment]").forEach(btn=>btn.onclick=()=>openRolloverReview(btn.dataset.reviewPayment));
