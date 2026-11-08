@@ -21,7 +21,7 @@ let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
 let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false,editingRecurringId=null,rememberCurrent=false;
-let customEditorType=null, customEntryText="";
+let customEditorType=null, customEntryText="",reviewScrollY=0,categoryPage=0,subcategoryPage=0,personPage=0;
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
@@ -77,8 +77,10 @@ function trackedPeople(){
 function personChoices(){
  const names=trackedPeople();
  if(choice.personTag&&!names.some(name=>key(name)===key(choice.personTag)))names.push(choice.personTag);
- return names.map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
- '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
+ const shown=names.length>5?names.slice(personPage*5,personPage*5+5):names;
+ return shown.map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
+ '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("")+
+ (names.length>5?'<button type="button" class="tx-add-choice tx-more-choice" data-next-choices="person">More · '+(personPage+1)+'/'+Math.ceil(names.length/5)+'</button>':'');
 }
 function classifyStream(r){
  if(["bill","subscription","recurring"].includes(r.display_type))return r.display_type;
@@ -169,6 +171,7 @@ function takeChoice(tx){
  if(choice.id!==tx.id){
    choice={id:tx.id,category:tx.category||"",subcategory:tx.subcategory||"",kind:tx.kind||"expense",personTag:tx.person_tag||""};
    rememberCurrent=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;
+   categoryPage=0;subcategoryPage=0;personPage=0;
  }
 }
 function renderFilters(){
@@ -207,7 +210,8 @@ function categoryChips(){
  const normalizedHint=key(hint).replace(/[^a-z0-9]/g,"");
  const available=availableCategories();
  const matched=available.some(c=>normalizedHint===key(c.name).replace(/[^a-z0-9]/g,""));
- const chips=available.map(c=>{
+ const visible=available.length>6?available.slice(categoryPage*6,categoryPage*6+6):available;
+ const chips=visible.map(c=>{
   const suggested=!!normalizedHint&&normalizedHint===key(c.name).replace(/[^a-z0-9]/g,"");
   const selected=key(choice.category)===key(c.name);
   return '<button class="tx-choice'+(selected?" selected":"")+(suggested&&!selected?" suggested":"")+
@@ -222,9 +226,10 @@ function categoryChips(){
    ' style="--chip-color:'+safe(colorFor(hint))+'"><span class="tx-suggest-star" aria-hidden="true">✦</span> Suggested: '+
    safe(hint)+'</button>');
  }
- if(choice.category&&!chips.some(()=>false)&&!available.some(c=>key(c.name)===key(choice.category))&&key(choice.category)!==key(hint)){
+ if(choice.category&&!available.some(c=>key(c.name)===key(choice.category))&&key(choice.category)!==key(hint)){
   chips.push('<button class="tx-choice selected" data-choice-category="'+enc(choice.category)+'" type="button" style="--chip-color:'+colorFor(choice.category)+'">'+safe(choice.category)+'</button>');
  }
+ if(available.length>6)chips.push('<button class="tx-add-choice tx-more-choice" type="button" data-next-choices="category" title="More categories">More · '+(categoryPage+1)+'/'+Math.ceil(available.length/6)+'</button>');
  return chips.join("");
 }
 function subcategoryChips(){
@@ -233,9 +238,11 @@ function subcategoryChips(){
  if(!subs.length&&!choice.subcategory)return '';
  const list=subs.slice();
  if(choice.subcategory&&!list.some(name=>key(name)===key(choice.subcategory)))list.push(choice.subcategory);
- return list.map(name=>
+ const shown=list.length>5?list.slice(subcategoryPage*5,subcategoryPage*5+5):list;
+ return shown.map(name=>
  '<button type="button" class="tx-choice tx-subchoice '+(key(choice.subcategory)===key(name)?"selected":"")+
- '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("");
+ '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("")+
+ (list.length>5?'<button type="button" class="tx-add-choice tx-more-choice" data-next-choices="subcategory">More · '+(subcategoryPage+1)+'/'+Math.ceil(list.length/5)+'</button>':'');
 }
 function kindChips(){
  return ["expense","transfer","income","refund"].map(k=>
@@ -392,7 +399,14 @@ function renderDashboard(){
  '<div id="txHistoryRows">'+historyRows()+'</div></div></details>')+
  '</div>';
  renderFilters();
+ const hadReviewLock=document.body.classList.contains("tx-review-open");
  document.body.classList.toggle("tx-review-open",reviewOpen);
+ if(reviewOpen){
+  document.body.style.top="-"+reviewScrollY+"px";
+ }else if(hadReviewLock){
+  document.body.style.top="";
+  window.scrollTo({top:reviewScrollY,behavior:"instant"});
+ }
 }
 function render(){
  if(!user){root.innerHTML='<div class="tx-loading">Sign in to view your transactions.</div>';return;}
@@ -441,7 +455,7 @@ function refreshReviewOverlay(){
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
- if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;}
+ if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;subcategoryPage=0;}
  if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;customSubOpen=false;}
  if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;customPersonOpen=false;}
  if(kind==="kind"){choice.kind=value;}
@@ -684,8 +698,18 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choicePerson!==undefined){choose("person",decodeURIComponent(el.dataset.choicePerson));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txUndoAction"){await undoLast();return;}
- if(el.id==="txStartReview"){reviewOpen=true;notice("");render();return;}
+ if(el.id==="txStartReview"){reviewScrollY=window.scrollY;reviewOpen=true;notice("");render();return;}
  if(el.id==="txEditorCancel"){document.activeElement?.blur();closeCustomEditor();return;}
+ if(el.dataset.nextChoices){
+  const group=el.dataset.nextChoices;
+  if(group==="category")categoryPage=(categoryPage+1)%Math.ceil(availableCategories().length/6);
+  if(group==="subcategory"){
+   const c=categories.find(c=>key(c.name)===key(choice.category));
+   subcategoryPage=(subcategoryPage+1)%Math.ceil(Math.max(1,(c?.subcategories||[]).length)/5);
+  }
+  if(group==="person")personPage=(personPage+1)%Math.ceil(trackedPeople().length/5);
+  refreshReviewOverlay();return;
+ }
  if(el.id==="txCloseReview"||el.id==="txReviewDone"){document.activeElement?.blur();reviewOpen=false;customEditorType=null;notice("");render();return;}
  if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
   customEditorType=el.id.slice(5);customEntryText="";
