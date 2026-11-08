@@ -167,3 +167,7 @@ html[data-theme="dark"] #txCategorySettings .tx-save{background:#5f9f90;color:#1
 }
 
 #view-transactions .tx-filter-shortcuts{display:flex;gap:8px;flex-wrap:wrap;margin:-1px 0 15px}
+
+#txCategorySettings .tx-cat-notice:empty{display:none}
+#txCategorySettings .tx-cat-notice{font-size:13px;background:var(--primary-soft);color:var(--primary-dark);border-radius:12px;padding:10px 12px;margin:0 0 12px}
+#txCategorySettings .tx-cat-notice.error{background:var(--danger-bg);color:var(--danger)}
