@@ -296,7 +296,7 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
 <link rel="stylesheet" href="./transactions.css" />
 <link rel="stylesheet" href="./site-refresh.css" />
 <link rel="stylesheet" href="./transactions-v2.css" />
-<script>try{var p=localStorage.getItem("horstBudgetTheme")||"system";document.documentElement.dataset.theme=p==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):p;}catch(e){document.documentElement.dataset.theme="light"}</script>
+<script>(()=>{try{const pref=localStorage.getItem("horstBudgetTheme")||"system";document.documentElement.dataset.theme=pref==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):pref;}catch(e){document.documentElement.dataset.theme="light"}})()</script>
 </head>
 <body class="auth-pending">
 <div id="siteAuthScreen">
