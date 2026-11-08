@@ -1,0 +1,154 @@
+/* Horst Budget 2026: quiet neutral surfaces, restrained green accents. */
+:root{
+  --bg:#f7f7f6;
+  --surface:#fff;
+  --surface-sunk:#f1f2f0;
+  --ink:#242b28;
+  --muted:#737b77;
+  --line:#e4e7e4;
+  --primary:#527969;
+  --primary-dark:#385a4c;
+  --primary-soft:#edf3ee;
+  --shadow:0 4px 16px rgba(28,38,32,.035),0 1px 2px rgba(28,38,32,.018);
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#171b19;
+  --surface:#242a27;
+  --surface-sunk:#2c322f;
+  --ink:#f0f2ef;
+  --muted:#a5ada7;
+  --line:#3a423d;
+  --primary:#91b8a1;
+  --primary-dark:#abd0b9;
+  --primary-soft:#324038;
+  --shadow:0 5px 20px rgba(0,0,0,.12);
+}
+body,.app-header{background:var(--bg);color:var(--ink);}
+.app-header{border-bottom:1px solid var(--line);box-shadow:none;}
+.card,.home-metric,.home-action,.tx-history-drawer,details.soft-collapse{
+  background:var(--surface);box-shadow:var(--shadow);border-color:var(--line);
+}
+.home-metric.accent{
+  background:var(--surface)!important;
+  border:1px solid var(--line)!important;
+  box-shadow:inset 0 3px 0 var(--primary),var(--shadow);
+}
+.home-metric.accent .label,.home-metric.accent .hint{color:var(--muted)!important;}
+.home-metric.accent .value{color:var(--ink)!important;}
+.home-action.colorful{
+  background:var(--surface)!important;
+  border-color:var(--line)!important;
+  box-shadow:inset 0 3px 0 var(--primary),var(--shadow);
+}
+.home-action.colorful h2{color:var(--ink)!important;}
+.home-action.colorful p:not(.home-kicker){color:var(--muted)!important;}
+.home-action .home-kicker{color:var(--primary)!important;}
+.brand-mark{background:var(--primary)!important;color:white!important;box-shadow:none!important}
+#view-transactions .tx-spending-hero{
+  background:var(--surface)!important;
+  border:1px solid var(--line)!important;
+  box-shadow:var(--shadow);
+}
+#view-transactions .tx-spend-kicker{color:var(--muted)!important}
+#view-transactions .tx-spend-amount{color:var(--ink)!important}
+#view-transactions .tx-spending-hero .tx-muted{color:var(--muted)!important}
+#view-transactions .tx-donut-center{background:var(--surface)!important}
+#view-transactions .tx-donut-center strong{color:var(--ink)!important}
+#view-transactions .tx-donut-center span{color:var(--muted)!important}
+#view-transactions .tx-finish{
+  background:var(--surface)!important;
+  border:1px solid var(--line)!important;
+  box-shadow:var(--shadow);
+}
+#view-transactions .tx-finish h3{color:var(--ink)!important}
+#view-transactions .tx-finish p{color:var(--muted)!important}
+#view-transactions .tx-merchant-avatar{
+  background:var(--surface-sunk)!important;
+  color:var(--primary)!important;
+  border:1px solid var(--line);
+}
+#view-transactions .tx-swipe-card{box-shadow:var(--shadow)}
+#view-transactions .tx-card-stack:before{background:var(--surface-sunk)}
+.home-subscriptions-card{
+  padding:21px 23px;
+  margin:0 0 18px;
+  border-radius:22px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  box-shadow:var(--shadow);
+}
+.home-subscriptions-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.home-subscriptions-head h2{font-size:21px;letter-spacing:-.5px;margin:0 0 4px}
+.home-subscriptions-head .card-sub{margin:0;font-size:12px}
+.home-sub-badge{background:var(--primary-soft);color:var(--primary-dark);border-radius:99px;padding:7px 10px;font-weight:750;font-size:12px;white-space:nowrap}
+.home-subscription-row{padding:13px 0}
+.home-subscription-row>div{min-width:0}
+.home-subscription-row strong{font-size:14px;display:block;overflow-wrap:anywhere}
+.home-subscription-row small{display:block;color:var(--muted);font-size:12px;margin-top:5px}
+.home-sub-amount{white-space:nowrap;color:var(--ink)}
+.home-sub-foot{font-size:11px;color:var(--muted);margin:12px 0 0;line-height:1.45}
+.tx-bill-count{color:var(--muted);font-size:12px;font-weight:600;margin-left:7px}
+.tx-detected-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.tx-detected-item:last-child{border-bottom:0}
+.tx-detected-item strong{font-size:14px;overflow-wrap:anywhere}
+.tx-detected-item>strong{white-space:nowrap}
+.tx-detected-item small{display:block;font-size:12px;color:var(--muted);margin-top:5px}
+#view-transactions .tx-review-controls{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+#view-transactions .tx-review-undo-row{display:flex;justify-content:flex-end;margin-bottom:12px}
+#view-transactions .tx-undo{
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--ink);
+  padding:8px 12px;
+  min-height:37px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:750;
+  cursor:pointer;
+  box-shadow:var(--shadow);
+}
+#view-transactions .tx-undo span{font-size:19px;vertical-align:middle;margin-right:4px;color:var(--primary)}
+#view-transactions .tx-undo:hover{background:var(--surface-sunk)}
+#view-transactions .tx-person-details{
+  margin:9px 0 13px;
+  border:1px solid var(--line);
+  border-radius:13px;
+  background:var(--surface);
+  padding:12px 13px;
+}
+#view-transactions .tx-person-details summary{
+  cursor:pointer;
+  color:var(--ink);
+  display:flex;align-items:center;justify-content:space-between;
+  gap:12px;font-size:14px;font-weight:700;
+}
+#view-transactions .tx-person-details summary>span{font-size:12px;color:var(--muted);font-weight:600;overflow-wrap:anywhere;text-align:right}
+#view-transactions .tx-person-panel{padding:13px 0 2px}
+#view-transactions .tx-person-panel .tx-muted{margin:8px 0 0}
+#view-transactions .tx-people-spend{
+  margin-top:14px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:22px;
+  padding:18px 22px;
+  box-shadow:var(--shadow);
+}
+#view-transactions .tx-people-spend h3{font-size:17px;margin:0 0 12px;letter-spacing:-.3px}
+#view-transactions .tx-person-summary{
+  padding:11px 2px;
+  border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  font-size:14px;
+}
+#view-transactions .tx-person-summary:last-child{border-bottom:0}
+#view-transactions .tx-person-summary span{overflow-wrap:anywhere}
+#view-transactions .tx-person-summary strong{font-variant-numeric:tabular-nums}
+html[data-theme="dark"] .home-subscriptions-card,
+html[data-theme="dark"] #view-transactions .tx-people-spend{background:var(--surface)}
+@media(max-width:650px){
+  .home-subscriptions-card{padding:18px;margin-bottom:14px}
+  #view-transactions .tx-review-controls{gap:6px}
+  #view-transactions .tx-undo{padding:7px 10px}
+  #view-transactions .tx-people-spend{padding:16px}
+}

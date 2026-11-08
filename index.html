@@ -296,6 +296,7 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
 <link rel="stylesheet" href="./transactions.css" />
 <link rel="stylesheet" href="./site-refresh.css" />
 <link rel="stylesheet" href="./transactions-v2.css" />
+<link rel="stylesheet" href="./neutral-refresh.css" />
 <script>(()=>{try{const pref=localStorage.getItem("horstBudgetTheme")||"system";document.documentElement.dataset.theme=pref==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):pref;}catch(e){document.documentElement.dataset.theme="light"}})()</script>
 </head>
 <body class="auth-pending">
@@ -365,12 +366,22 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
       </div>
     </details>
     <div id="dueDateNeededBox" class="hidden"></div>
-    <div id="billsList" class="bills-list"></div>
+    <details class="soft-collapse" id="billMainDetails" open>
+      <summary>Bills <span class="tx-bill-count" id="billMainCount"></span></summary>
+      <div class="collapse-body"><div id="billsList" class="bills-list"></div></div>
+    </details>
     <details class="soft-collapse" id="billSubscriptionsDetails">
       <summary>Subscriptions &amp; irregular payments</summary>
       <div class="collapse-body">
         <p class="muted-note">Monthly subscriptions and less-frequent payments are listed separately from your every-paycheck calculations.</p>
         <div id="annualList" class="bills-list"></div>
+      </div>
+    </details>
+    <details class="soft-collapse" id="billDetectedRecurring">
+      <summary>Detected recurring charges <span id="billRecurringCount" class="tx-bill-count"></span></summary>
+      <div class="collapse-body">
+        <p class="muted-note">Upcoming amounts and dates are estimates from transaction patterns, not confirmed unpaid bills. They aren't added to your paycheck plan.</p>
+        <div id="detectedRecurringList"></div>
       </div>
     </details>
   </section>
@@ -1278,7 +1289,7 @@ function setView(view){
   document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
   document.getElementById("view-" + view).classList.remove("hidden");
   if (view === "home") renderHome();
-  if (view === "bills" || view === "annual") { renderBillsList(); renderAnnualList(); }
+  if (view === "bills" || view === "annual") { renderBillsList(); renderAnnualList(); window.horstTransactions?.renderRecurringBills?.(); }
   if (view === "history") renderHistory();
   if (view === "transactions" && window.horstTransactions) window.horstTransactions.open();
   if (view === "settings") renderSettings();
@@ -1302,6 +1313,15 @@ function renderHome(){
   const spendingLabel=loaded?fmtMoney(overview.spending):"—";
   const reviewCount=loaded?overview.toReview:null;
   const topCats=loaded?(overview.topCategories||[]):[];
+  const subscriptions=loaded?(overview.upcomingSubscriptions||[]):[];
+  const subRows=subscriptions.map(s=>{
+    const when=String(s.predicted_next_date||"").split("-");
+    const due=when.length===3?new Date(+when[0],+when[1]-1,+when[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"Unknown";
+    const amount=Number(s.typical_amount||s.last_amount||0);
+    return '<div class="home-mini-row home-subscription-row"><div><strong>'+safeText(s.description||s.merchant)+'</strong>'+
+      '<small>Predicted '+safeText(due)+' · '+safeText(s.account_name||"Connected account")+'</small></div>'+
+      '<strong class="home-sub-amount">'+(Number.isFinite(amount)&&amount>0?'≈'+fmtMoney(amount):"Varies")+'</strong></div>';
+  }).join("");
   const chartColors=["#6ca9a0","#e8a28c","#92a0e8"];
   const catMax=topCats.length?Math.max(1,topCats[0][1]):1;
   const cats=topCats.length?topCats.map((entry,i)=>{
@@ -1318,6 +1338,11 @@ function renderHome(){
       '<div class="home-metric"><div class="label">After planned payments</div><div class="value">'+fmtMoney(bal.projectedRemaining)+'</div><div class="hint">Plan estimate, not bank balance</div></div>'+
       '<div class="home-metric"><div class="label">Tracked spending this month</div><div class="value">'+spendingLabel+'</div><div class="hint">'+(loaded?overview.monthRows+" imported transactions":"Connecting transactions…")+'</div></div>'+
     '</div>'+
+    '<div class="card home-subscriptions-card"><div class="home-subscriptions-head"><div><p class="home-kicker">ON THE RADAR</p><h2>Subscriptions coming up</h2><p class="card-sub">Predicted in the next 7 days, including today</p></div>'+
+    '<span class="home-sub-badge">'+(loaded?subscriptions.length:"…")+' expected</span></div>'+
+    (loaded?(subscriptions.length?subRows:'<p class="muted-note">No detected subscriptions expected in the next seven days.</p>'):
+      '<p class="muted-note">Checking your connected recurring payments…</p>')+
+    '<p class="home-sub-foot">These are forecasts from payment history, not guaranteed charge dates or unpaid balances.</p></div>'+
     '<div class="home-panel-grid">'+
       '<div class="home-action colorful"><p class="home-kicker">KEEP IT EASY</p><h2>Review transactions ✨</h2><p>'+(reviewCount===null?"Checking your transaction inbox…":reviewCount?reviewCount+" transactions need your input. One quick card at a time.":"You're all caught up. New transactions will appear here.")+'</p><button type="button" class="btn btn-primary" id="homeReviewTransactions">Open transaction review →</button></div>'+
       '<div class="home-action"><p class="home-kicker">PAYCHECK PLANNER</p><h2>Keep your paycheck on track.</h2><p>Next paycheck: '+safeText(nextPayDate)+'. Review the amounts and upcoming bills assigned to it.</p><button type="button" class="btn" id="homeOpenPlan">Open paycheck plan →</button></div>'+
@@ -2111,6 +2136,7 @@ function renderBillsList(){
     box.innerHTML = `<strong>Due date needed:</strong> ${needDate.map(b=>b.name).join(", ")}. Edit each bill to fill it in.`;
   } else box.classList.add("hidden");
 
+  const billCount=document.getElementById("billMainCount");if(billCount)billCount.textContent=bills.length?"("+bills.length+")":"";
   document.getElementById("billsList").innerHTML = bills.map(b => billRowHtml(b)).join("") || (
     !state.bills.length
       ? `<div class="muted-note" style="text-align:center; padding:24px 10px;">
