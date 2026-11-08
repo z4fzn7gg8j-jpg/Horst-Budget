@@ -237,3 +237,87 @@ html[data-theme="dark"] .tx-stream-recurring{color:#e5be98}
 #view-transactions .tx-options .tx-external-suggestion .tx-suggest-star{
  margin-right:3px;
 }
+
+
+/* Review remains locked in one viewport; entering custom labels uses a separate compact editor. */
+html:has(body.tx-review-open){height:100%;max-height:100%;overflow:hidden!important;overscroll-behavior:none}
+body.tx-review-open{
+ position:fixed!important;left:0;right:0;
+ width:100%!important;height:100dvh!important;
+ max-width:100vw!important;overflow:hidden!important;
+ overscroll-behavior:none!important;touch-action:none!important;
+}
+#view-transactions .tx-review-overlay{
+ width:100%!important;max-width:100vw!important;
+ height:100dvh!important;max-height:100dvh!important;
+ overflow:hidden!important;overscroll-behavior:none!important;
+ touch-action:none!important;isolation:isolate;
+}
+#view-transactions .tx-review-frame,#view-transactions .tx-review-card{
+ max-width:100%;min-width:0;overflow:hidden!important;
+ overscroll-behavior:none!important;touch-action:none!important;
+}
+#view-transactions .tx-review-fields{
+ min-height:0;overflow:hidden!important;
+ overscroll-behavior:none!important;touch-action:none!important;
+ justify-content:space-evenly;gap:clamp(5px,1dvh,11px);
+ padding-top:8px;padding-bottom:3px;
+}
+#view-transactions .tx-options{max-width:100%;overflow:hidden!important;touch-action:none!important}
+#view-transactions .tx-review-hero{touch-action:none!important;cursor:grab}
+#view-transactions .tx-review-hero:active{cursor:grabbing}
+#view-transactions .tx-review-meta{max-width:100%;overflow-wrap:anywhere}
+#view-transactions .tx-options .tx-more-choice{
+ min-height:32px;font-weight:800;font-size:11px;
+ border-style:solid;border-color:var(--line);background:var(--surface-sunk);
+}
+#view-transactions .tx-editor-cover{
+ position:fixed;inset:0;z-index:1100;
+ width:100%;max-width:100vw;height:100dvh;max-height:100dvh;
+ overflow:hidden!important;overscroll-behavior:none!important;touch-action:none!important;
+ background:rgba(18,23,21,.40);backdrop-filter:blur(3px);
+ display:flex;align-items:flex-start;justify-content:center;
+ padding:calc(env(safe-area-inset-top,0px) + 76px) 14px 12px;
+}
+#view-transactions .tx-editor-pane{
+ flex:none;width:100%;max-width:420px;min-width:0;
+ background:var(--surface);border:1px solid var(--line);
+ box-shadow:0 16px 48px rgba(0,0,0,.16);border-radius:20px;
+ padding:18px;display:flex;flex-direction:column;gap:11px;
+ max-height:min(290px,65dvh);overflow:hidden!important;
+}
+#view-transactions .tx-editor-label{
+ font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--primary);
+}
+#view-transactions .tx-editor-pane label{font-size:15px;font-weight:730;color:var(--ink)}
+#view-transactions #txEditorInput{
+ display:block;width:100%;min-width:0;min-height:44px;height:44px;
+ border-radius:12px;border:1px solid var(--line);
+ background:var(--surface-sunk);color:var(--ink);outline:0;
+ font-size:16px!important;line-height:22px!important;letter-spacing:0;
+ padding:11px 12px;-webkit-text-size-adjust:100%;
+ touch-action:manipulation!important;
+}
+#view-transactions #txEditorInput:focus{
+ border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);
+}
+#view-transactions .tx-editor-actions{display:flex;gap:9px}
+#view-transactions .tx-editor-actions button{
+ flex:1;min-width:0;min-height:43px;border:1px solid var(--line);
+ border-radius:12px;background:var(--surface-sunk);color:var(--ink);
+ font-size:14px;font-weight:800;cursor:pointer;
+}
+#view-transactions .tx-editor-actions button[type="submit"]{background:var(--primary);color:white;border-color:var(--primary)}
+#view-transactions .tx-custom-entry{display:none!important}
+#view-transactions .tx-type-choices{overflow:hidden!important;max-width:100%}
+#view-transactions .tx-kind{flex:0 1 auto}
+@media(max-height:690px){
+ #view-transactions .tx-review-fields{gap:3px;padding-top:4px}
+ #view-transactions .tx-field-group>label{margin-bottom:2px}
+ #view-transactions .tx-options{gap:4px}
+ #view-transactions .tx-options .tx-choice{padding:5px 7px;min-height:30px}
+ #view-transactions .tx-review-hero{padding-bottom:5px}
+ #view-transactions .tx-review-amount{font-size:25px}
+ #view-transactions .tx-review-help{display:none}
+ #view-transactions .tx-review-buttons button{min-height:40px}
+}
