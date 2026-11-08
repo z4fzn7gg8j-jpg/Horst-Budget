@@ -21,6 +21,7 @@ let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
 let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false,editingRecurringId=null,rememberCurrent=false;
+let customEditorType=null, customEntryText="";
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const feedback=root.querySelector("#txReviewFeedback");if(feedback){feedback.textContent=noticeText;feedback.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
@@ -74,7 +75,9 @@ function trackedPeople(){
  return [...names.values()].sort((a,b)=>a.localeCompare(b));
 }
 function personChoices(){
- return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
+ const names=trackedPeople();
+ if(choice.personTag&&!names.some(name=>key(name)===key(choice.personTag)))names.push(choice.personTag);
+ return names.map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
  '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
 function classifyStream(r){
@@ -196,13 +199,18 @@ function categoryChips(){
    ' style="--chip-color:'+safe(colorFor(hint))+'"><span class="tx-suggest-star" aria-hidden="true">✦</span> Suggested: '+
    safe(hint)+'</button>');
  }
+ if(choice.category&&!chips.some(()=>false)&&!available.some(c=>key(c.name)===key(choice.category))&&key(choice.category)!==key(hint)){
+  chips.push('<button class="tx-choice selected" data-choice-category="'+enc(choice.category)+'" type="button" style="--chip-color:'+colorFor(choice.category)+'">'+safe(choice.category)+'</button>');
+ }
  return chips.join("");
 }
 function subcategoryChips(){
  const cat=categories.find(c=>key(c.name)===key(choice.category));
  const subs=cat?cat.subcategories||[]:[];
- if(!subs.length)return '';
- return subs.map(name=>
+ if(!subs.length&&!choice.subcategory)return '';
+ const list=subs.slice();
+ if(choice.subcategory&&!list.some(name=>key(name)===key(choice.subcategory)))list.push(choice.subcategory);
+ return list.map(name=>
  '<button type="button" class="tx-choice tx-subchoice '+(key(choice.subcategory)===key(name)?"selected":"")+
  '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
@@ -214,11 +222,35 @@ function kindChips(){
 function undoMarkup(){
  return undoStack.length?'<button id="txUndoAction" class="tx-undo" type="button" aria-label="Undo last transaction">↶ Undo</button>':'';
 }
-function addOption(type,open,placeholder){
- const value=type==='Category'?choice.category:type==='Subcategory'?choice.subcategory:choice.personTag;
- return open?'<div class="tx-custom-entry"><input class="tx-clean-input" id="txReview'+type+'" maxlength="80" autocomplete="off" placeholder="'+placeholder+'" value="'+safe(value)+'">'+
- '<button class="tx-input-close" type="button" data-close-custom="'+type+'" aria-label="Close">×</button></div>':
- '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+function addOption(type){
+ return '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+}
+function editorMarkup(){
+ if(!customEditorType)return '';
+ const type=customEditorType;
+ const fieldName=type==='Category'?'Category':type==='Subcategory'?'Subcategory':'Person';
+ const prompt=type==='Category'?'Enter a category name':type==='Subcategory'?'Enter a subcategory':'Who was it for?';
+ return '<div class="tx-editor-cover" id="txEditorCover" role="dialog" aria-modal="true" aria-label="Add '+fieldName+'">'+
+  '<form id="txEditorForm" class="tx-editor-pane" autocomplete="off">'+
+  '<div class="tx-editor-label">ADD '+fieldName.toUpperCase()+'</div>'+
+  '<label for="txEditorInput">'+safe(prompt)+'</label>'+
+  '<input id="txEditorInput" type="text" inputmode="text" enterkeyhint="done" maxlength="80" required value="'+safe(customEntryText)+'" placeholder="'+safe(prompt)+'">'+
+  '<div class="tx-editor-actions"><button type="button" id="txEditorCancel">Cancel</button><button type="submit">Done</button></div>'+
+  '</form></div>';
+}
+function closeCustomEditor(){
+ customEditorType=null;customEntryText="";
+ refreshReviewOverlay();
+}
+function commitCustomEditor(){
+ if(!customEditorType)return;
+ const input=root.querySelector("#txEditorInput"),value=(input?.value||"").trim();
+ if(!value){input?.focus();return;}
+ if(customEditorType==='Category'){choice.category=value;choice.subcategory='';}
+ else if(customEditorType==='Subcategory')choice.subcategory=value;
+ else choice.personTag=value;
+ document.activeElement?.blur();
+ closeCustomEditor();
 }
 function reviewOverlay(){
  if(!reviewOpen)return '';
@@ -241,9 +273,9 @@ function reviewOverlay(){
  '<div class="tx-review-amount">'+(Number(tx.amount)<0?'−':Number(tx.amount)>0?'+':'')+money(Math.abs(Number(tx.amount)))+'</div>'+
  '<div class="tx-review-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div></div>'+
  '<div class="tx-review-fields">'+
- '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category',customCategoryOpen,'New category')+'</div></div>'+
- '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory',customSubOpen,'New subcategory')+'</div></div>'+
- '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person',customPersonOpen,'Who was it for?')+'</div></div>'+
+ '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category')+'</div></div>'+
+ '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory')+'</div></div>'+
+ '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person')+'</div></div>'+
  '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
  '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
  (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"'+(rememberCurrent?' checked':'')+'> Remember this merchant</label>':'')+
@@ -251,7 +283,7 @@ function reviewOverlay(){
  '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
  '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
  '<button id="txSaveCard" class="tx-save" type="button">Save & next <span>→</span></button></div>'+
- '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div></div>';
+ '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div>'+editorMarkup()+'</div>';
 }
 function reviewerHtml(){
  const count=filteredReview().length;
@@ -630,11 +662,13 @@ root.addEventListener("click",async event=>{
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
  if(el.id==="txUndoAction"){await undoLast();return;}
  if(el.id==="txStartReview"){reviewOpen=true;notice("");render();return;}
- if(el.id==="txCloseReview"||el.id==="txReviewDone"){reviewOpen=false;customCategoryOpen=false;customSubOpen=false;customPersonOpen=false;notice("");render();return;}
+ if(el.id==="txEditorCancel"){document.activeElement?.blur();closeCustomEditor();return;}
+ if(el.id==="txCloseReview"||el.id==="txReviewDone"){document.activeElement?.blur();reviewOpen=false;customEditorType=null;notice("");render();return;}
  if(el.id==="txAddCategory"||el.id==="txAddSubcategory"||el.id==="txAddPerson"){
-  const type=el.id.slice(5);if(type==="Category")customCategoryOpen=true;
-  if(type==="Subcategory")customSubOpen=true;if(type==="Person")customPersonOpen=true;
-  refreshReviewOverlay();const input=root.querySelector("#txReview"+type);input?.focus();return;
+  customEditorType=el.id.slice(5);customEntryText="";
+  refreshReviewOverlay();
+  root.querySelector("#txEditorInput")?.focus({preventScroll:true});
+  return;
  }
  if(el.dataset.closeCustom){
   const type=el.dataset.closeCustom;if(type==="Category")customCategoryOpen=false;
@@ -652,6 +686,7 @@ root.addEventListener("click",async event=>{
 });
 root.addEventListener("input",e=>{
  if(e.target.id==="txReviewCategory"){choice.category=e.target.value;}
+ if(e.target.id==="txEditorInput"){customEntryText=e.target.value;}
  if(e.target.id==="txReviewSubcategory"){choice.subcategory=e.target.value;}
  if(e.target.id==="txReviewPerson"){choice.personTag=e.target.value;}
  if(e.target.id==="txHistorySearch"){historySearch=e.target.value;renderHistoryRows();}
@@ -666,6 +701,7 @@ root.addEventListener("change",e=>{
 });
 root.addEventListener("submit",async e=>{
  const form=e.target;
+ if(form.id==="txEditorForm"){e.preventDefault();commitCustomEditor();return;}
  if(!form.matches(".tx-history-form"))return;
  e.preventDefault();const tx=rows.find(t=>t.id===form.dataset.editForm);if(!tx)return;
  const btn=form.querySelector('button[type="submit"]');btn.disabled=true;
@@ -738,13 +774,14 @@ function animateReviewSwipe(direction){
 }
 root.addEventListener("pointerdown",e=>{
  const card=e.target.closest("#txSwipeCard");
- if(!reviewOpen||!card||e.target.closest("button,input,select,label,summary"))return;
+ if(!reviewOpen||!card||customEditorType||!e.target.closest("#txSwipeZone"))return;
  drag={id:e.pointerId,start:e.clientX,time:performance.now(),card};
 });
 root.addEventListener("pointermove",e=>{
  if(!drag||drag.id!==e.pointerId||!drag.card.isConnected)return;
  const dx=e.clientX-drag.start;
  if(Math.abs(dx)<8)return;
+ if(e.cancelable)e.preventDefault();
  const bounded=Math.max(-65,Math.min(65,dx*.45));
  drag.card.style.transition="none";
  drag.card.style.transform="translate3d("+bounded+"px,0,0)";
@@ -763,7 +800,11 @@ document.addEventListener("keydown",e=>{
  if(typeof currentView==="undefined"||currentView!=="transactions"||!user)return;
  if(e.target.closest("input,textarea,select,[contenteditable]"))return;
  if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&reviewOpen){e.preventDefault();undoLast();return;}
- if(e.key==="Escape"&&reviewOpen){reviewOpen=false;render();return;}
+ if(e.key==="Escape"&&reviewOpen){
+  if(customEditorType){document.activeElement?.blur();closeCustomEditor();}
+  else {reviewOpen=false;render();}
+  return;
+ }
  if(!reviewOpen)return;
  if(e.key==="ArrowRight"){e.preventDefault();animateReviewSwipe("right");}
  if(e.key==="ArrowLeft"){e.preventDefault();animateReviewSwipe("left");}
