@@ -2946,6 +2946,7 @@ function renderSettings(){
   });
   const signedInEmail=document.getElementById("siteSignedInEmail");
   if(signedInEmail)signedInEmail.textContent=window.horstBudgetCurrentUser?.email||"Current member";
+  window.horstTransactions?.renderAccountsSettings?.();
   window.horstTransactions?.renderCategorySettings?.();
 }
 
