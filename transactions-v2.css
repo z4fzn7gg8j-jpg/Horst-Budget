@@ -165,3 +165,5 @@ html[data-theme="dark"] #txCategorySettings .tx-save{background:#5f9f90;color:#1
  #txCategorySettings .tx-new-category{flex-direction:column}
  #txCategorySettings .tx-new-category button{align-self:flex-end}
 }
+
+#view-transactions .tx-filter-shortcuts{display:flex;gap:8px;flex-wrap:wrap;margin:-1px 0 15px}
