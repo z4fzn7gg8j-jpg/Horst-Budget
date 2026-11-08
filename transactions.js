@@ -76,6 +76,25 @@ function personChoices(){
  return trackedPeople().map(name=>'<button class="tx-choice'+(key(choice.personTag)===key(name)?" selected":"")+
  '" type="button" data-choice-person="'+enc(name)+'">'+safe(name)+'</button>').join("");
 }
+function renderRecurringBills(){
+ const target=document.getElementById("detectedRecurringList");
+ const badge=document.getElementById("billRecurringCount");
+ if(!target)return;
+ const items=recurring.filter(r=>r.active&&!r.hidden&&
+  ["SUBSCRIPTION","BILL","MORTGAGE"].includes(r.recurring_type))
+  .sort((a,b)=>(a.predicted_next_date||"9999").localeCompare(b.predicted_next_date||"9999"));
+ if(badge)badge.textContent=items.length?"("+items.length+")":"";
+ if(!loaded){target.innerHTML='<p class="tx-muted">Loading recurring patterns…</p>';return;}
+ if(!items.length){target.innerHTML='<p class="tx-muted">No recognized recurring bills or subscriptions yet.</p>';return;}
+ target.innerHTML=items.map(r=>{
+  const value=Number(r.typical_amount||r.last_amount||0);
+  const date=r.predicted_next_date?dateLabel(r.predicted_next_date):"Date unknown";
+  return '<div class="tx-detected-item"><div><strong>'+safe(r.description||r.merchant)+'</strong>'+
+   '<small>'+safe(r.recurring_type==="SUBSCRIPTION"?"Subscription":r.recurring_type==="MORTGAGE"?"Mortgage":"Bill")+
+   ' · '+safe(r.frequency||"Recurring")+' · Expected '+safe(date)+'</small></div>'+
+   '<strong>'+(value>0?'≈'+money(value):'Varies')+'</strong></div>';
+ }).join("");
+}
 function getOverview(){
  const current=today();
  const monthRows=rows.filter(t=>t.txn_date&&t.txn_date.startsWith(current));
@@ -276,6 +295,7 @@ async function loadData(){
  noticeText="";noticeBad=false;
  render();
  if(typeof currentView!=="undefined"&&currentView==="home"&&typeof renderHome==="function")renderHome();
+ renderRecurringBills();
  const panel=document.getElementById("txCategorySettings");
  if(panel)renderCategorySettings();
 }
@@ -616,7 +636,7 @@ document.addEventListener("keydown",e=>{
 });
 window.horstTransactions={
  preload,open:async()=>{await preload();render();},
- getOverview,renderCategorySettings,
+ getOverview,renderCategorySettings,renderRecurringBills,
  refresh:async()=>{openPromise=null;await preload();}
 };
 })();
