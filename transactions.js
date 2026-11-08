@@ -19,7 +19,7 @@ let draftFilter={...filter};
 let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,editingCategoryId=null;
 let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense"},activeCategoryDrill=null;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
-function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}}
+function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
 function activeRange(){
@@ -345,6 +345,7 @@ function renderCategorySettings(){
  const current=availableCategories();
  node.innerHTML='<div class="tx-settings-heading"><div><h2>Categories & subcategories</h2>'+
  '<p>Make these your own. You are never locked into the suggested categories.</p></div></div>'+
+ '<div id="txCatNotice" class="tx-cat-notice'+(noticeBad?" error":"")+'" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
  '<form id="txNewCategory" class="tx-new-category"><input class="tx-clean-input" type="text" name="name" maxlength="80" required placeholder="New category name"><button class="tx-save" type="submit">Add category</button></form>'+
  '<div class="tx-config-list">'+(current.length?current.map(c=>categoryConfigRow(c)).join(""):'<p class="tx-muted">You have not created any categories yet. Add one above when you need it.</p>')+'</div>'+
  '<p class="tx-muted">Archiving hides a category from new choices but keeps its historical transactions. Renaming updates existing transaction labels.</p>';
