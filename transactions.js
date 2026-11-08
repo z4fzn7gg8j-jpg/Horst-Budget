@@ -15,6 +15,7 @@ const key=x=>categoryName(x).toLocaleLowerCase();
 const isValidColor=c=>/^#[0-9a-f]{6}$/i.test(c||"");
 let client=null,user=null,rows=[],rules=[],categories=[],loaded=false,loading=false;
 let filter={mode:"all",month:today(),year:String(new Date().getFullYear()),start:"",end:""};
+let draftFilter={...filter};
 let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,editingCategoryId=null;
 let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense"},activeCategoryDrill=null;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
@@ -84,12 +85,14 @@ function renderFilters(){
  [['all',"All dates"],["this-month","This month"],["last-month","Last month"],["this-year","This year"]].map(([mode,label])=>
  '<button type="button" class="tx-mini-chip" data-period="'+mode+'">'+label+'</button>').join("")+'</div>'+
  '<div class="tx-filter-inputs">'+
- '<label>Month<input class="text-input" id="txFilterMonth" type="month" value="'+safe(filter.month)+'"></label>'+
- '<label>Year<input class="text-input" id="txFilterYear" type="number" min="2000" max="2100" inputmode="numeric" value="'+safe(filter.year)+'"></label>'+
- '</div><div class="tx-filter-inputs">'+
- '<label>From<input class="text-input" id="txFilterStart" type="date" value="'+safe(filter.start)+'"></label>'+
- '<label>To<input class="text-input" id="txFilterEnd" type="date" value="'+safe(filter.end)+'"></label></div>'+
- '<p class="tx-muted">Changing the date range updates your review cards, spending charts, and transaction history together.</p>';
+ '<label>Month<input class="text-input" id="txFilterMonth" type="month" value="'+safe(draftFilter.month)+'"></label>'+
+ '<label>Year<input class="text-input" id="txFilterYear" type="number" min="2000" max="2100" inputmode="numeric" value="'+safe(draftFilter.year)+'"></label>'+
+ '</div><div class="tx-filter-shortcuts"><button type="button" data-apply-time="month" class="tx-mini-chip">Use month</button><button type="button" data-apply-time="year" class="tx-mini-chip">Use year</button></div>'+
+ '<div class="tx-filter-inputs">'+
+ '<label>From<input class="text-input" id="txFilterStart" type="date" value="'+safe(draftFilter.start)+'"></label>'+
+ '<label>To<input class="text-input" id="txFilterEnd" type="date" value="'+safe(draftFilter.end)+'"></label></div>'+
+ '<button type="button" data-apply-time="range" class="tx-mini-chip">Apply date range</button>'+
+ '<p class="tx-muted">Your selection updates the review cards, spending charts, and transaction history together.</p>';
 }
 function categoryChips(){
  const ordered=availableCategories();
@@ -419,9 +422,16 @@ function applyPeriod(mode){
 root.addEventListener("click",async event=>{
  const el=event.target.closest("button,summary");if(!el)return;
  try{
- if(el.id==="txOpenFilters"){filtersOpen=!filtersOpen;renderFilters();el.setAttribute("aria-expanded",String(filtersOpen));return;}
+ if(el.id==="txOpenFilters"){filtersOpen=!filtersOpen;if(filtersOpen)draftFilter={...filter};renderFilters();el.setAttribute("aria-expanded",String(filtersOpen));return;}
  if(el.id==="txCloseFilters"){filtersOpen=false;renderFilters();root.querySelector("#txOpenFilters")?.setAttribute("aria-expanded","false");return;}
  if(el.dataset.period){applyPeriod(el.dataset.period);return;}
+ if(el.dataset.applyTime){
+  const mode=el.dataset.applyTime;
+  if(mode==="month"&&!/^\d{4}-\d{2}$/.test(draftFilter.month)){notice("Choose a valid month.",true);return;}
+  if(mode==="year"&&!/^\d{4}$/.test(draftFilter.year)){notice("Choose a valid year.",true);return;}
+  if(mode==="range"&&(!draftFilter.start||!draftFilter.end||draftFilter.start>draftFilter.end)){notice("Choose both dates, from earliest to latest.",true);return;}
+  filter={...draftFilter,mode};filtersOpen=false;skipped=new Set();choice.id=null;notice("");render();return;
+ }
  if(el.dataset.choiceCategory!==undefined){choose("category",decodeURIComponent(el.dataset.choiceCategory));return;}
  if(el.dataset.choiceSub!==undefined){choose("subcategory",decodeURIComponent(el.dataset.choiceSub));return;}
  if(el.dataset.choiceKind){choose("kind",el.dataset.choiceKind);return;}
@@ -440,14 +450,10 @@ root.addEventListener("input",e=>{
 });
 root.addEventListener("change",e=>{
  const el=e.target;
- if(el.id==="txFilterMonth"&&/^\d{4}-\d{2}$/.test(el.value)){filter.month=el.value;filter.mode="month";filtersOpen=false;skipped=new Set();choice.id=null;render();}
- if(el.id==="txFilterYear"&&/^\d{4}$/.test(el.value)){filter.year=el.value;filter.mode="year";filtersOpen=false;skipped=new Set();choice.id=null;render();}
- if(el.id==="txFilterStart"||el.id==="txFilterEnd"){
-  filter.start=root.querySelector("#txFilterStart")?.value||"";
-  filter.end=root.querySelector("#txFilterEnd")?.value||"";
-  if(filter.start&&filter.end&&filter.start>filter.end){notice("The start date must be before the end date.",true);return;}
-  filter.mode="range";filtersOpen=false;skipped=new Set();choice.id=null;render();
- }
+ if(el.id==="txFilterMonth")draftFilter.month=el.value;
+ if(el.id==="txFilterYear")draftFilter.year=el.value;
+ if(el.id==="txFilterStart")draftFilter.start=el.value;
+ if(el.id==="txFilterEnd")draftFilter.end=el.value;
 });
 root.addEventListener("submit",async e=>{
  const form=e.target;
