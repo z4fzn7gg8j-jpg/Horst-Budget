@@ -20,6 +20,7 @@ let filtersOpen=false,historyOpen=false,historySearch="",editHistoryId=null,edit
 let skipped=new Set(),choice={id:null,category:"",subcategory:"",kind:"expense",personTag:""},activeCategoryDrill=null;
 let recurring=[],undoStack=[],revisitId=null,actionBusy=false;
 let drag=null,openPromise=null,noticeText="",noticeBad=false;
+let reviewOpen=false,customCategoryOpen=false,customSubOpen=false,customPersonOpen=false,swipeAnimating=false;
 function notice(message,bad=false){noticeText=message||"";noticeBad=bad;const el=root.querySelector("#txNotice");if(el){el.textContent=noticeText;el.classList.toggle("error",bad);}const catEl=document.getElementById("txCatNotice");if(catEl){catEl.textContent=noticeText;catEl.classList.toggle("error",bad);}}
 function colorFor(name){const saved=categories.find(c=>key(c.name)===key(name));return saved&&isValidColor(saved.color)?saved.color:palette[Math.abs([...String(name)].reduce((a,c)=>a+c.charCodeAt(0),0))%palette.length];}
 function availableCategories(){return categories.filter(c=>!c.archived).sort((a,b)=>a.position-b.position||a.name.localeCompare(b.name));}
@@ -135,15 +136,19 @@ function renderFilters(){
  '<p class="tx-muted">Your selection updates the review cards, spending charts, and transaction history together.</p>';
 }
 function categoryChips(){
- const ordered=availableCategories();
- return ordered.map(c=>
- '<button class="tx-choice '+(key(choice.category)===key(c.name)?"selected":"")+
- '" type="button" data-choice-category="'+enc(c.name)+'" style="--chip-color:'+c.color+'">'+safe(c.name)+'</button>').join("");
+ const tx=selectedReview(),hint=String(tx?.suggested_category||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+ return availableCategories().map(c=>{
+  const matched=!!hint&&hint===key(c.name).replace(/[^a-z0-9]/g,""),selected=key(choice.category)===key(c.name);
+  return '<button class="tx-choice'+(selected?' selected':'')+(matched&&!selected?' suggested':'')+
+    '" data-choice-category="'+enc(c.name)+'" type="button"'+(matched?' title="Suggested category"':'')+
+    ' style="--chip-color:'+safe(isValidColor(c.color)?c.color:colorFor(c.name))+'">'+safe(c.name)+
+    (matched&&!selected?'<span class="tx-suggest-star" aria-hidden="true"> ✦</span>':'')+'</button>';
+ }).join("");
 }
 function subcategoryChips(){
  const cat=categories.find(c=>key(c.name)===key(choice.category));
  const subs=cat?cat.subcategories||[]:[];
- if(!subs.length)return '<p class="tx-muted">Optional. Make your own subcategory below.</p>';
+ if(!subs.length)return '';
  return subs.map(name=>
  '<button type="button" class="tx-choice tx-subchoice '+(key(choice.subcategory)===key(name)?"selected":"")+
  '" data-choice-sub="'+enc(name)+'">'+safe(name)+'</button>').join("");
@@ -154,48 +159,52 @@ function kindChips(){
  ({expense:"Purchase",transfer:"Transfer",income:"Income",refund:"Refund"}[k])+'</button>').join("");
 }
 function undoMarkup(){
- if(!undoStack.length)return "";
- return '<button class="tx-undo" type="button" id="txUndoAction" aria-label="Undo last transaction action"><span aria-hidden="true">↶</span> Undo / Back</button>';
+ return undoStack.length?'<button id="txUndoAction" class="tx-undo" type="button" aria-label="Undo last transaction">↶ Undo</button>':'';
+}
+function addOption(type,open,placeholder){
+ const value=type==='Category'?choice.category:type==='Subcategory'?choice.subcategory:choice.personTag;
+ return open?'<div class="tx-custom-entry"><input class="tx-clean-input" id="txReview'+type+'" maxlength="80" autocomplete="off" placeholder="'+placeholder+'" value="'+safe(value)+'">'+
+ '<button class="tx-input-close" type="button" data-close-custom="'+type+'" aria-label="Close">×</button></div>':
+ '<button class="tx-add-choice" id="txAdd'+type+'" type="button" aria-label="Add '+type.toLowerCase()+'">＋</button>';
+}
+function reviewOverlay(){
+ if(!reviewOpen)return '';
+ const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=selectedReview(),n=all.length;
+ if(!tx)return '<div class="tx-review-overlay" id="txReviewOverlay" role="dialog" aria-modal="true" aria-label="Review complete">'+
+ '<div class="tx-modal-top"><button id="txCloseReview" type="button" class="tx-modal-close">✕ Close</button>'+undoMarkup()+'</div>'+
+ '<div class="tx-review-completed"><div class="tx-celebration">✦</div><h2>All caught up!</h2><p>No more cards in this date range.</p>'+
+ (skipped.size?'<button id="txReviewSkipped" class="tx-skip" type="button">Revisit skipped</button>':'')+
+ '<button id="txReviewDone" class="tx-save" type="button">View insights →</button></div></div>';
+ takeChoice(tx);
+ const stable=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
+ const selectedLabel={expense:"Purchase",transfer:"Transfer",income:"Income",refund:"Refund"}[choice.kind]||"Purchase";
+ const done=n-pending.length;
+ return '<div class="tx-review-overlay" id="txReviewOverlay" role="dialog" aria-modal="true" aria-label="Review transactions">'+
+ '<div class="tx-review-frame"><header class="tx-modal-top"><button id="txCloseReview" type="button" class="tx-modal-close" aria-label="Close review">✕</button>'+
+ '<span class="tx-modal-title">Review transactions</span><span class="tx-modal-count">'+(done+1)+' / '+n+'</span>'+undoMarkup()+'</header>'+
+ '<div class="tx-overlay-progress"><span style="width:'+(n?100*done/n:100)+'%"></span></div>'+
+ '<article class="tx-review-card" id="txSwipeCard" data-tx-id="'+safe(tx.id)+'">'+
+ '<div class="tx-review-hero" id="txSwipeZone"><h2>'+safe(tx.merchant)+'</h2>'+
+ '<div class="tx-review-amount">'+(Number(tx.amount)<0?'−':Number(tx.amount)>0?'+':'')+money(Math.abs(Number(tx.amount)))+'</div>'+
+ '<div class="tx-review-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div></div>'+
+ '<div class="tx-review-fields">'+
+ '<div class="tx-field-group"><label>Category</label><div class="tx-options">'+categoryChips()+addOption('Category',customCategoryOpen,'New category')+'</div></div>'+
+ '<div class="tx-field-group"><label>Subcategory <small>optional</small></label><div class="tx-options">'+subcategoryChips()+addOption('Subcategory',customSubOpen,'New subcategory')+'</div></div>'+
+ '<div class="tx-field-group"><label>Person <small>optional</small></label><div class="tx-options">'+personChoices()+addOption('Person',customPersonOpen,'Who was it for?')+'</div></div>'+
+ '<div class="tx-type-line"><span>Transaction type</span><button type="button" id="txTypeToggle">'+selectedLabel+' ⌄</button></div>'+
+ '<div class="tx-type-choices" id="txTypeChoices" hidden>'+kindChips()+'</div>'+
+ (stable?'<label class="tx-mini-remember"><input type="checkbox" id="txRememberMerchant"> Remember this merchant</label>':'')+
+ '</div></article><footer class="tx-review-bottom">'+
+ '<div id="txReviewFeedback" role="status" aria-live="polite">'+safe(noticeText)+'</div>'+
+ '<div class="tx-review-buttons"><button id="txSkipCard" class="tx-skip" type="button">Skip</button>'+
+ '<button id="txSaveCard" class="tx-save" type="button">Save & next <span>→</span></button></div>'+
+ '<div class="tx-review-help">Swipe right to save · left to skip</div></footer></div></div>';
 }
 function reviewerHtml(){
- const all=filteredReview(),pending=all.filter(t=>!skipped.has(t.id)),tx=selectedReview();
- const done=all.length-pending.length;
- const number=rows.filter(t=>t.review_status==="auto"&&dateScope().some(s=>s.id===t.id)).length;
- const progress=all.length+number?Math.round((number/(all.length+number))*100):100;
- if(!tx)return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div></div>'+
- '<div class="tx-review-undo-row">'+undoMarkup()+'</div>'+
- '<div class="tx-finish"><span class="tx-celebrate">✦</span><h3>All caught up for now.</h3>'+
- '<p>'+(all.length&&skipped.size?"You skipped a few. They are still waiting for you.":"Nothing needs your input for this period.")+'</p>'+
- (all.length&&skipped.size?'<button class="tx-link-button" type="button" id="txReviewSkipped">Review skipped cards</button>':"")+
- '</div></section>';
- takeChoice(tx);
- const stableMerchant=!/^(deposit|bill payment|point of sale|withdrawal|transfer|adjustment)$/i.test(tx.merchant||"");
- return '<section class="tx-review-area"><div class="tx-section-heading"><div><p class="tx-kicker">YOUR DAILY CHECK-IN</p><h2>Review transactions!</h2></div>'+
- '<div class="tx-review-controls">'+undoMarkup()+'<span class="tx-review-count">'+pending.length+' left</span></div></div>'+
- '<div class="tx-progress" role="progressbar" aria-label="Reviewed transactions" aria-valuenow="'+progress+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+progress+'%"></span></div>'+
- '<div class="tx-card-stack"><article class="tx-swipe-card" id="txSwipeCard" data-tx-id="'+safe(tx.id)+'">'+
- '<div class="tx-card-top"><div class="tx-merchant-avatar">'+safe((tx.merchant||"?").slice(0,1).toUpperCase())+'</div>'+
- '<span class="tx-card-counter">'+(all.length-pending.length+1)+' / '+all.length+'</span></div>'+
- '<div class="tx-merchant">'+safe(tx.merchant)+'</div>'+
- '<div class="tx-card-amount">'+(Number(tx.amount)<0?"−":Number(tx.amount)>0?"+":"")+money(Math.abs(Number(tx.amount)))+'</div>'+
- '<div class="tx-card-meta">'+safe(dateLabel(tx.txn_date))+' · '+safe(tx.account_name||"Connected account")+'</div>'+
- '<div class="tx-guess"><span>✧</span> '+(tx.suggested_category?
- '<span>Possible category: <strong>'+safe(String(tx.suggested_category).replaceAll("_"," "))+'</strong> — your choice</span>':
- '<span>No confident suggestion yet. Your call!</span>')+'</div>'+
- '<div class="tx-choice-block"><label>Category</label><div class="tx-chip-group" id="txCategoryChips">'+categoryChips()+'</div>'+
- '<input class="tx-clean-input" id="txReviewCategory" name="category" aria-label="Your category" maxlength="80" value="'+safe(choice.category)+'" placeholder="Or type your own category"></div>'+
- '<div class="tx-choice-block"><label>Subcategory <span class="tx-optional">optional</span></label><div class="tx-chip-group" id="txSubcategoryChips">'+subcategoryChips()+'</div>'+
- '<input class="tx-clean-input" id="txReviewSubcategory" name="subcategory" maxlength="80" value="'+safe(choice.subcategory)+'" placeholder="Or add your own subcategory"></div>'+
- '<details class="tx-person-details"'+(choice.personTag?' open':'')+'><summary>Who was it for? <span>'+(choice.personTag?safe(choice.personTag):'Optional')+'</span></summary>'+
- '<div class="tx-person-panel">'+(trackedPeople().length?'<div class="tx-chip-group">'+personChoices()+'</div>':'')+
- '<input class="tx-clean-input" id="txReviewPerson" name="person" maxlength="80" autocomplete="off" placeholder="Assign to a person (optional)" value="'+safe(choice.personTag)+'">'+
- '<p class="tx-muted">This tracks spending by person, separate from the category.</p></div></details>'+
- '<details class="tx-kind-details"><summary>What kind of transaction? <span>'+safe(choice.kind)+'</span></summary><div class="tx-kind-group">'+kindChips()+'</div></details>'+
- (stableMerchant?'<label class="tx-remember"><input type="checkbox" id="txRememberMerchant"> Remember this merchant for future charges</label>':
- '<p class="tx-muted">Generic payment names are never saved as automatic merchant rules.</p>')+
- '<div class="tx-swipe-actions"><button type="button" class="tx-skip" id="txSkipCard">Skip</button>'+
- '<button type="button" class="tx-save" id="txSaveCard">Save &amp; next <span>→</span></button></div>'+
- '<div class="tx-swipe-hint">Swipe right to save · swipe left to skip</div></article></div></section>';
+ const count=filteredReview().length;
+ return '<section class="tx-review-invite"><div class="tx-invite-copy"><span>✦ QUICK CHECK-IN</span><h2>Review transactions</h2>'+
+ '<p>'+(count?count+' transactions waiting for your choices.':'You’re all caught up!')+'</p></div>'+
+ '<button id="txStartReview" type="button"'+(!count?' disabled':'')+' class="tx-invite-button">'+(count?'Start review':'All done')+' →</button></section>'+reviewOverlay();
 }
 function renderInsights(){
  const data=dateScope(),sum=summary(data),ranked=Object.entries(sum.byCat).sort((a,b)=>b[1]-a[1]);
@@ -275,6 +284,7 @@ function renderDashboard(){
  '<div id="txHistoryRows">'+historyRows()+'</div></div></details>')+
  '</div>';
  renderFilters();
+ document.body.classList.toggle("tx-review-open",reviewOpen);
 }
 function render(){
  if(!user){root.innerHTML='<div class="tx-loading">Sign in to view your transactions.</div>';return;}
@@ -316,9 +326,9 @@ async function preload(){
 function choose(kind,value){
  const tx=selectedReview();if(!tx)return;
  takeChoice(tx);
- if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";}
- if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;}
- if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;}
+ if(kind==="category"){choice.category=key(choice.category)===key(value)?"":value;choice.subcategory="";customCategoryOpen=false;customSubOpen=false;}
+ if(kind==="subcategory"){choice.subcategory=key(choice.subcategory)===key(value)?"":value;customSubOpen=false;}
+ if(kind==="person"){choice.personTag=key(choice.personTag)===key(value)?"":value;customPersonOpen=false;}
  if(kind==="kind"){choice.kind=value;}
  renderDashboard();
 }
