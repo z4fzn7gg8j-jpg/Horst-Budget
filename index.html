@@ -293,6 +293,7 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
 }
 
 </style>
+<link rel="stylesheet" href="./transactions.css" />
 </head>
 <body>
 
@@ -312,6 +313,7 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
     <button class="tab" data-view="bills">All Bills</button>
     <button class="tab" data-view="annual">Subscriptions &amp; Irregular</button>
     <button class="tab" data-view="history">History</button>
+    <button class="tab" data-view="transactions">Transactions</button>
     <button class="tab" data-view="settings">Settings</button>
   </nav>
 </header>
@@ -367,6 +369,9 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
     <p class="muted-note">Everything you've marked complete, most recent first — grouped by month, then by paycheck.</p>
     <div id="historyList" class="history-list"></div>
   </section>
+
+  <!-- PRIVATE TRANSACTIONS -->
+  <section id="view-transactions" class="view hidden"><div id="txRoot" aria-live="polite"><p class="tx-spinner">Loading secure transactions…</p></div></section>
 
   <!-- SETTINGS -->
   <section id="view-settings" class="view hidden">
@@ -1245,6 +1250,7 @@ function setView(view){
   if (view === "bills") renderBillsList();
   if (view === "annual") renderAnnualList();
   if (view === "history") renderHistory();
+  if (view === "transactions" && window.horstTransactions) window.horstTransactions.open();
   if (view === "settings") renderSettings();
   if (view === "plan") renderPlan();
 }
@@ -2914,5 +2920,7 @@ document.getElementById("addBillBtn").addEventListener("click", () => openBillMo
 bootstrap();
 
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js" defer></script>
+<script src="./transactions.js" defer></script>
 </body>
 </html>
