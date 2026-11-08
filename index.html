@@ -297,6 +297,7 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
 <link rel="stylesheet" href="./site-refresh.css" />
 <link rel="stylesheet" href="./transactions-v2.css" />
 <link rel="stylesheet" href="./neutral-refresh.css" />
+<link rel="stylesheet" href="./mobile-polish.css" />
 <script>(()=>{try{const pref=localStorage.getItem("horstBudgetTheme")||"system";document.documentElement.dataset.theme=pref==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):pref;}catch(e){document.documentElement.dataset.theme="light"}})()</script>
 </head>
 <body class="auth-pending">
@@ -371,16 +372,10 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
       <div class="collapse-body"><div id="billsList" class="bills-list"></div></div>
     </details>
     <details class="soft-collapse" id="billSubscriptionsDetails">
-      <summary>Subscriptions &amp; irregular payments</summary>
+      <summary>Subscriptions &amp; recurring <span id="billRecurringCount" class="tx-bill-count"></span></summary>
       <div class="collapse-body">
-        <p class="muted-note">Monthly subscriptions and less-frequent payments are listed separately from your every-paycheck calculations.</p>
+        <p class="muted-note">Your saved subscriptions and recurring charges detected from linked accounts, in one place. Detected payment dates are estimates and do not change the paycheck plan.</p>
         <div id="annualList" class="bills-list"></div>
-      </div>
-    </details>
-    <details class="soft-collapse" id="billDetectedRecurring">
-      <summary>Detected recurring charges <span id="billRecurringCount" class="tx-bill-count"></span></summary>
-      <div class="collapse-body">
-        <p class="muted-note">Upcoming amounts and dates are estimates from transaction patterns, not confirmed unpaid bills. They aren't added to your paycheck plan.</p>
         <div id="detectedRecurringList"></div>
       </div>
     </details>
@@ -608,7 +603,8 @@ function saveLocal(){
 
 function setSyncPill(text, cls){
   const el = document.getElementById("syncPill");
-  el.textContent = text;
+  el.title = text;
+  el.textContent = cls === "ok" ? "Synced" : cls === "err" ? "Sync issue" : "Syncing…";
   el.className = "sync-pill" + (cls ? " " + cls : "");
 }
 
