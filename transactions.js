@@ -66,7 +66,7 @@ function classifyPayment(tx){
    (/\bpayment\b/.test(description)&&/\b(visa|credit|card|affirm|discover|chase)\b/.test(description));
  const utilityMerchant=/\b(southwest gas|orbitel communications|electric company|water utility)\b/.test(description);
  if(account==="credit_card"){
-  if(amount>0)return refund&&!debtPay?"refund":"debt";
+  if(amount>0)return debtPay?"debt":(refund||tx.kind==="refund")?"refund":"debt";
   if(interestFee)return "purchase";
   if(tx.kind==="transfer")return "internal";
   return knownBills?"bill":"purchase";
@@ -585,7 +585,7 @@ async function persist(tx,category,subcategory,kind,remember,personTag){
  if(category.length>80||subcategory.length>80){notice("Category names must be 80 characters or less.",true);return false;}
  if(!["expense","transfer","income","refund"].includes(kind))kind="expense";
  const purpose=classifyPayment({...tx,category,subcategory,kind});
- const savedKind=(purpose==="debt"||purpose==="internal")?"transfer":purpose==="refund"?"refund":kind;
+ const savedKind=(purpose==="debt"||purpose==="internal")?"transfer":purpose==="refund"?"refund":purpose==="income"?"income":"expense";
  const update=await client.from("horst_transactions").update({
   category,subcategory:subcategory||null,person_tag:personTag||null,kind:savedKind,
   payment_purpose:purpose,exclude_from_spending:savedKind==="transfer",
