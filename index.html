@@ -294,8 +294,26 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
 
 </style>
 <link rel="stylesheet" href="./transactions.css" />
+<link rel="stylesheet" href="./site-refresh.css" />
+<link rel="stylesheet" href="./transactions-v2.css" />
+<script>(()=>{try{const pref=localStorage.getItem("horstBudgetTheme")||"system";document.documentElement.dataset.theme=pref==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):pref;}catch(e){document.documentElement.dataset.theme="light"}})()</script>
 </head>
-<body>
+<body class="auth-pending">
+<div id="siteAuthScreen">
+  <div class="site-auth-frame">
+    <div class="brand-mark" aria-hidden="true">✓</div>
+    <div class="auth-kicker">Your private financial space</div>
+    <h1>Welcome to Horst Budget.</h1>
+    <p>One secure sign-in for your paycheck plan, bills, transactions, and spending insights.</p>
+    <form id="siteAuthForm">
+      <label for="siteAuthEmail">Email address</label>
+      <input class="text-input" type="email" id="siteAuthEmail" placeholder="you@example.com" autocomplete="email" required />
+      <button class="btn btn-primary btn-block" id="siteAuthSubmit" type="submit">Email me a sign-in link</button>
+    </form>
+    <div id="siteAuthNotice" role="status" aria-live="polite"></div>
+    <p style="font-size:12px;margin-top:20px;">Only authorized members can open the budget. Your data stays private.</p>
+  </div>
+</div>
 
 <div id="syncPill" class="sync-pill" aria-live="polite">Loading…</div>
 
@@ -303,20 +321,18 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
   <div class="brand">
     <span class="brand-mark">✓</span>
     <div>
-      <span class="brand-name">Steady</span>
-      <div class="brand-subtitle">Horst Family Bill and Paycheck Planner</div>
+      <span class="brand-name">Horst Budget</span>
+      <div class="brand-subtitle">Family finances, simplified</div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-view="home">Home</button>
     <button class="tab" data-view="plan">Paycheck Plan</button>
-    <button class="tab" data-view="bills">All Bills</button>
-    <button class="tab" data-view="annual">Subscriptions &amp; Irregular</button>
-    <button class="tab" data-view="history">History</button>
     <button class="tab" data-view="transactions">Transactions</button>
+    <button class="tab" data-view="bills">Bills</button>
+    <button class="tab" data-view="history">History</button>
     <button class="tab" data-view="settings">Settings</button>
-  </nav>
-</header>
+  </nav></header>
 
 <main id="app">
 
@@ -327,41 +343,36 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
     <div id="planContent"></div>
   </section>
 
-  <!-- ALL BILLS -->
+  <!-- BILLS + SUBSCRIPTIONS -->
   <section id="view-bills" class="view hidden">
-    <div class="bills-toolbar">
-      <input type="search" id="billSearch" placeholder="Search bills…" class="text-input" />
-      <div class="toolbar-row">
-        <select id="sortBills" class="select-input">
-          <option value="dueDay">Sort: Due date</option>
-          <option value="amount">Sort: Amount</option>
-          <option value="name">Sort: A–Z</option>
-        </select>
-        <select id="filterStatus" class="select-input">
-          <option value="">All statuses</option>
-        </select>
-        <select id="filterMethod" class="select-input">
-          <option value="">All payment methods</option>
-        </select>
-        <select id="filterType" class="select-input">
-          <option value="">All bill types</option>
-        </select>
-        <select id="filterActive" class="select-input">
-          <option value="">Active &amp; inactive</option>
-          <option value="active">Active only</option>
-          <option value="inactive">Inactive only</option>
-        </select>
-      </div>
+    <div class="bills-header">
+      <div><h1>Bills &amp; subscriptions</h1><p>Everything recurring, without the clutter.</p></div>
       <button class="btn btn-primary" id="addBillBtn">+ Add a bill</button>
     </div>
+    <div class="bills-simple-search">
+      <input type="search" id="billSearch" placeholder="Search your bills…" class="text-input" />
+    </div>
+    <details class="soft-collapse bills-advanced" id="billFiltersDetails">
+      <summary>Filters &amp; sorting</summary>
+      <div class="collapse-body">
+        <div class="toolbar-row">
+          <select id="sortBills" class="select-input"><option value="dueDay">Sort: Due date</option><option value="amount">Sort: Amount</option><option value="name">Sort: A–Z</option></select>
+          <select id="filterStatus" class="select-input"><option value="">All statuses</option></select>
+          <select id="filterMethod" class="select-input"><option value="">All payment methods</option></select>
+          <select id="filterType" class="select-input"><option value="">All bill types</option></select>
+          <select id="filterActive" class="select-input"><option value="">Active &amp; inactive</option><option value="active">Active only</option><option value="inactive">Inactive only</option></select>
+        </div>
+      </div>
+    </details>
     <div id="dueDateNeededBox" class="hidden"></div>
     <div id="billsList" class="bills-list"></div>
-  </section>
-
-  <!-- SUBSCRIPTIONS / IRREGULAR PAYMENTS -->
-  <section id="view-annual" class="view hidden">
-    <p class="muted-note"><strong>Subscriptions</strong> are anything billed monthly. <strong>Irregular payments</strong> are anything billed less often than that — quarterly, every six months, or annual. Both live here for reference and are kept out of the every-paycheck math — nothing here gets subtracted from a paycheck balance.</p>
-    <div id="annualList" class="bills-list"></div>
+    <details class="soft-collapse" id="billSubscriptionsDetails">
+      <summary>Subscriptions &amp; irregular payments</summary>
+      <div class="collapse-body">
+        <p class="muted-note">Monthly subscriptions and less-frequent payments are listed separately from your every-paycheck calculations.</p>
+        <div id="annualList" class="bills-list"></div>
+      </div>
+    </details>
   </section>
 
   <!-- HISTORY -->
@@ -387,6 +398,21 @@ label{ display:block; font-size: 14px; font-weight: 600; color: var(--muted); ma
    STEADY — Bill & Paycheck Planner
    Single-file vanilla JS app. No build step. Deploys as a static site.
    ========================================================================= */
+
+/* Appearance preference applies across the entire Horst Budget app. */
+function horstSetTheme(mode){
+  if(!["light","dark","system"].includes(mode))mode="system";
+  localStorage.setItem("horstBudgetTheme",mode);
+  document.documentElement.dataset.theme=mode==="system"?
+    (window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):mode;
+}
+window.horstSetTheme=horstSetTheme;
+if(window.matchMedia){
+  const darkWatcher=window.matchMedia("(prefers-color-scheme: dark)");
+  darkWatcher.addEventListener?.("change",()=>{
+    if((localStorage.getItem("horstBudgetTheme")||"system")==="system")horstSetTheme("system");
+  });
+}
 
 /* ---------- Constants ---------- */
 const MS_DAY = 86400000;
@@ -593,10 +619,14 @@ function syncFailure(error){
   if (currentView === "home") renderHome();
 }
 async function cloudRequest(method, query, payload, prefer){
-  const url = state.settings.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + encodeURIComponent(state.settings.supabaseTable) + query;
+  const url = DEFAULT_SETTINGS.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + encodeURIComponent(DEFAULT_SETTINGS.supabaseTable) + query;
+  const authClient=window.horstAuthClient;
+  if(!authClient)throw new Error("Horst Budget sign-in is required.");
+  const sessionResult=await authClient.auth.getSession();
+  if(sessionResult.error||!sessionResult.data?.session?.access_token)throw new Error("Your sign-in has expired. Please sign in again.");
   const response = await fetch(url, {
     method,
-    headers: {apikey:state.settings.supabaseKey, "Content-Type":"application/json", ...(prefer ? {Prefer:prefer} : {})},
+    headers: {apikey:state.settings.supabaseKey,Authorization:"Bearer "+sessionResult.data.session.access_token,"Content-Type":"application/json", ...(prefer ? {Prefer:prefer} : {})},
     ...(payload ? {body:JSON.stringify(payload)} : {}),
     signal:AbortSignal.timeout(15000)
   });
@@ -1242,13 +1272,13 @@ function computeBalance(index){
 
 /* ---------- Rendering: shell / nav ---------- */
 function setView(view){
+  if(view==="annual")view="bills";
   currentView = view;
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
   document.getElementById("view-" + view).classList.remove("hidden");
   if (view === "home") renderHome();
-  if (view === "bills") renderBillsList();
-  if (view === "annual") renderAnnualList();
+  if (view === "bills" || view === "annual") { renderBillsList(); renderAnnualList(); }
   if (view === "history") renderHistory();
   if (view === "transactions" && window.horstTransactions) window.horstTransactions.open();
   if (view === "settings") renderSettings();
@@ -1260,31 +1290,51 @@ function renderAll(){
 }
 
 function renderHome(){
-  const index = todayIndex();
-  const bal = computeBalance(index);
-  const instances = bal.instances;
-  const pending = instances.filter(inst => !state.completed[inst.key] && effectiveStatus(inst.bill,inst.key) !== "no_payment_due");
-  const review = pending.filter(inst => needsRolloverReview(inst.key));
-  const owed = pending.filter(inst => !needsRolloverReview(inst.key) && reducesChecking(inst.bill) && !isExcludedFromBalance(inst.bill,inst.key));
-  const owedAmount = owed.reduce((sum,inst)=>sum+(effectiveAmount(inst.bill,inst.key)||0),0);
-  const hasEstimates = bal.usedEstimate || owed.some(inst=>!isAmountConfirmed(inst.bill,inst.key));
-  const cashLabel = bal.balanceIsSnapshot ? "Starting balance minus recorded payments" : "Calculated from recorded payments";
-  document.getElementById("homeContent").innerHTML = `
-    <div class="card"><span class="step-label">Your current paycheck · ${fmtDate(displayPayDate(index))}</span>
-      <h1 style="font-family:var(--font-display);margin:12px 0 8px">Your money at a glance</h1>
-      <p class="muted-note">Next paycheck: ${fmtDate(displayPayDate(index+1))}. ${review.length ? `${review.length} older payment${review.length===1?"":"s"} need review before the plan is complete.` : "Your recorded payments are ready to plan."}</p>
-      <button class="btn btn-primary" id="homeOpenPlan">Open paycheck plan</button></div>
-    <div class="summary-grid">
-      <div class="summary-card"><div class="label">Available now</div><div class="value">${bal.incomeEntered ? fmtMoney(bal.remaining) : "Not entered"}</div><div class="muted-note">${cashLabel}</div></div>
-      <div class="summary-card"><div class="label">Unpaid bills to plan</div><div class="value">${fmtMoney(owedAmount)}</div><div class="muted-note">${owed.some(inst=>!isAmountConfirmed(inst.bill,inst.key)) ? "Includes estimated amounts" : "Confirmed amounts"}</div></div>
-      <div class="summary-card ${bal.projectedRemaining < 0 ? "neg" : ""}"><div class="label">After planned payments${hasEstimates ? " · Estimate" : ""}</div><div class="value">${fmtMoney(bal.projectedRemaining)}</div><div class="muted-note">Includes unpaid tithing. ${review.length ? "Review items excluded." : ""}</div></div>
-      <div class="summary-card"><div class="label">Needs review</div><div class="value">${review.length}</div><div class="muted-note">May already be paid</div></div>
-    </div>
-    ${lastSyncError ? `<div class="card"><h2>Cloud needs attention</h2><p class="muted-note">${safeText(lastSyncError)}. ${localSaveSucceeded ? "Changes are saved on this device." : "Device storage could not save changes."}</p><button class="btn btn-sm" id="homeSync">Retry cloud save</button></div>` : ""}
-    <div class="card"><h2>Payments needing attention</h2><p class="muted-note">Review items first, then overdue and upcoming payments. Use the paycheck plan to mark a payment paid or update its amount.</p>
-      ${pending.length ? renderBillCards(pending,index) : '<p class="muted-note">No open payments assigned to this paycheck.</p>'}</div>`;
-  document.getElementById("homeOpenPlan").onclick = () => {currentPeriodIndex = todayIndex();setView("plan");};
-  const retry = document.getElementById("homeSync"); if (retry) retry.onclick = saveToSupabase;
+  const index=todayIndex();
+  const bal=computeBalance(index);
+  const instances=bal.instances;
+  const pending=instances.filter(inst=>!state.completed[inst.key] && effectiveStatus(inst.bill,inst.key)!=="no_payment_due");
+  const review=pending.filter(inst=>needsRolloverReview(inst.key));
+  const owed=pending.filter(inst=>!needsRolloverReview(inst.key)&&reducesChecking(inst.bill)&&!isExcludedFromBalance(inst.bill,inst.key));
+  const owedAmount=owed.reduce((sum,inst)=>sum+(effectiveAmount(inst.bill,inst.key)||0),0);
+  const overview=window.horstTransactions?.getOverview?.()||null;
+  const loaded=!!overview?.loaded;
+  const spendingLabel=loaded?fmtMoney(overview.spending):"—";
+  const reviewCount=loaded?overview.toReview:null;
+  const topCats=loaded?(overview.topCategories||[]):[];
+  const chartColors=["#6ca9a0","#e8a28c","#92a0e8"];
+  const catMax=topCats.length?Math.max(1,topCats[0][1]):1;
+  const cats=topCats.length?topCats.map((entry,i)=>{
+    const width=Math.max(2,Math.min(100,100*entry[1]/catMax));
+    return '<div class="home-mini-row"><div style="min-width:0;flex:1;"><span class="home-mini-dot" style="background:'+chartColors[i%chartColors.length]+'"></span><strong>'+safeText(entry[0])+'</strong><div style="height:6px;background:var(--surface-sunk);border-radius:8px;margin-top:8px;overflow:hidden;"><div style="height:100%;width:'+width+'%;background:'+chartColors[i%chartColors.length]+';border-radius:8px;"></div></div></div><strong style="white-space:nowrap;">'+fmtMoney(entry[1])+'</strong></div>';
+  }).join(""):'<p class="muted-note">Your spending categories will appear as transactions are imported.</p>';
+  const planPayDate=fmtDate(displayPayDate(index));
+  const nextPayDate=fmtDate(displayPayDate(index+1));
+  document.getElementById("homeContent").innerHTML=
+    '<div class="home-welcome"><div><p class="home-kicker">YOUR MONEY AT A GLANCE</p><h1>Your financial picture.</h1><p>One simple view of your paycheck plan and recorded spending.</p></div></div>'+
+    '<div class="home-top-grid">'+
+      '<div class="home-metric accent"><div class="label">Available in this paycheck plan</div><div class="value">'+(bal.incomeEntered?fmtMoney(bal.remaining):"Not entered")+'</div><div class="hint">Current plan · '+safeText(planPayDate)+'</div></div>'+
+      '<div class="home-metric"><div class="label">Unpaid bills to plan</div><div class="value">'+fmtMoney(owedAmount)+'</div><div class="hint">'+owed.length+' upcoming payment'+(owed.length===1?"":"s")+'</div></div>'+
+      '<div class="home-metric"><div class="label">After planned payments</div><div class="value">'+fmtMoney(bal.projectedRemaining)+'</div><div class="hint">Plan estimate, not bank balance</div></div>'+
+      '<div class="home-metric"><div class="label">Tracked spending this month</div><div class="value">'+spendingLabel+'</div><div class="hint">'+(loaded?overview.monthRows+" imported transactions":"Connecting transactions…")+'</div></div>'+
+    '</div>'+
+    '<div class="home-panel-grid">'+
+      '<div class="home-action colorful"><p class="home-kicker">KEEP IT EASY</p><h2>Review transactions ✨</h2><p>'+(reviewCount===null?"Checking your transaction inbox…":reviewCount?reviewCount+" transactions need your input. One quick card at a time.":"You're all caught up. New transactions will appear here.")+'</p><button type="button" class="btn btn-primary" id="homeReviewTransactions">Open transaction review →</button></div>'+
+      '<div class="home-action"><p class="home-kicker">PAYCHECK PLANNER</p><h2>Keep your paycheck on track.</h2><p>Next paycheck: '+safeText(nextPayDate)+'. Review the amounts and upcoming bills assigned to it.</p><button type="button" class="btn" id="homeOpenPlan">Open paycheck plan →</button></div>'+
+    '</div>'+
+    '<div class="home-panel-grid">'+
+      '<div class="card"><h2>Spending at a glance</h2><p class="card-sub">Top categories this month · based on imported records</p>'+cats+'<button type="button" class="btn btn-sm btn-ghost" id="homeOpenSpending" style="margin-top:12px;">See spending insights →</button></div>'+
+      '<div class="card"><h2>Bills & subscriptions</h2><p class="card-sub">Your recurring commitments, all in one place.</p><div class="home-mini-row"><span>Tracked bills</span><strong>'+state.bills.length+'</strong></div><div class="home-mini-row"><span>Current paycheck items to review</span><strong>'+review.length+'</strong></div><button type="button" class="btn btn-sm btn-ghost" id="homeViewBills" style="margin-top:12px;">Manage bills →</button></div>'+
+    '</div>'+
+    (lastSyncError?'<div class="card"><h2>Cloud sync needs attention</h2><p class="muted-note">'+safeText(lastSyncError)+'</p><button class="btn btn-sm" id="homeSync">Retry cloud save</button></div>':"")+
+    '<details class="soft-collapse"><summary>Upcoming payments · '+pending.length+'</summary><div class="collapse-body">'+
+       (pending.length?renderBillCards(pending,index):'<p class="muted-note">No open payments assigned to this paycheck.</p>')+
+       '</div></details>';
+  document.getElementById("homeOpenPlan").onclick=()=>{currentPeriodIndex=todayIndex();setView("plan");};
+  document.getElementById("homeReviewTransactions").onclick=()=>setView("transactions");
+  document.getElementById("homeOpenSpending").onclick=()=>setView("transactions");
+  document.getElementById("homeViewBills").onclick=()=>setView("bills");
+  const retry=document.getElementById("homeSync");if(retry)retry.onclick=saveToSupabase;
   wirePaymentActions(index);
 }
 function wirePaymentActions(index){
@@ -2756,6 +2806,21 @@ function renderSettings(){
   const autoEstInfo = getEstimatedIncome();
   document.getElementById("settingsContent").innerHTML = `
     <div class="card">
+      <h2 style="font-size:20px;margin-bottom:7px;">Appearance</h2>
+      <div class="card-sub">Make Horst Budget comfortable to use, day or night.</div>
+      <div class="settings-theme-choices" role="group" aria-label="Appearance">
+        <button class="btn btn-sm" type="button" data-theme-choice="light">☀ Light</button>
+        <button class="btn btn-sm" type="button" data-theme-choice="dark">☾ Dark</button>
+        <button class="btn btn-sm" type="button" data-theme-choice="system">◉ System</button>
+      </div>
+    </div>
+    <div class="card" id="txCategorySettings"><p class="muted-note">Loading your categories…</p></div>
+    <div class="card">
+      <h2 style="font-size:20px;margin-bottom:7px;">Account &amp; privacy</h2>
+      <p class="muted-note">Signed in as <strong id="siteSignedInEmail"></strong>. All sections use your Horst Budget sign-in.</p>
+      <button type="button" class="btn" id="siteSignOut">Sign out</button>
+    </div>
+    <div class="card">
       <details id="cloudSyncDetails">
         <summary style="cursor:pointer;"><h2 style="display:inline;">Cloud sync (Supabase)</h2></summary>
         <div class="card-sub" style="margin-top:8px;">Preconfigured — you shouldn't need to touch this unless something changes.</div>
@@ -2864,6 +2929,17 @@ function renderSettings(){
   document.getElementById("importJsonFile").onchange = importJson;
   document.getElementById("resetLocalBtn").onclick = openResetConfirmModal;
   ["deviceUser", "reset"].forEach(wireCollapsibleToggle);
+  const savedTheme=localStorage.getItem("horstBudgetTheme")||"system";
+  document.querySelectorAll("[data-theme-choice]").forEach(btn=>{
+    btn.setAttribute("aria-pressed",String(btn.dataset.themeChoice===savedTheme));
+    btn.onclick=()=>{
+      horstSetTheme(btn.dataset.themeChoice);
+      renderSettings();
+    };
+  });
+  const signedInEmail=document.getElementById("siteSignedInEmail");
+  if(signedInEmail)signedInEmail.textContent=window.horstBudgetCurrentUser?.email||"Current member";
+  window.horstTransactions?.renderCategorySettings?.();
 }
 
 function exportJson(){
@@ -2917,10 +2993,11 @@ document.getElementById("addBillBtn").addEventListener("click", () => openBillMo
   document.getElementById(id).addEventListener("change", renderBillsList);
 });
 
-bootstrap();
+window.horstBudgetStart=bootstrap;
 
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js" defer></script>
 <script src="./transactions.js" defer></script>
+<script src="./site-auth.js" defer></script>
 </body>
 </html>
